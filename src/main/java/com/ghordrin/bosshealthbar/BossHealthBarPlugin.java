@@ -187,6 +187,9 @@ public class BossHealthBarPlugin extends Plugin
 
 	private void resetState()
 	{
+		// The game's bars are unloaded on the login screen, and restored before this on shutdown.
+		nativeBarHidden = false;
+		tobBarHidden = false;
 		lastOpponent = null;
 		nativeBarNpc = null;
 		nativeBarSearchedId = -1;
@@ -283,7 +286,7 @@ public class BossHealthBarPlugin extends Plugin
 		{
 			return -1;
 		}
-		if (actor == findNativeBarNpc() || actor == findTobBoss())
+		if (isNativeBarNpc(actor) || actor == findTobBoss())
 		{
 			return 2;
 		}
@@ -367,26 +370,68 @@ public class BossHealthBarPlugin extends Plugin
 	}
 
 	/**
-	 * Whether a game boss bar is showing this opponent. Only checks the cached results of
-	 * {@link #findNativeBarNpc()} and {@link #findTobBoss()}, so it doesn't search the NPC list.
+	 * Whether a game boss bar is showing this opponent. Only checks the tracked NPC ID and the
+	 * cached result of {@link #findTobBoss()}, so it doesn't search the NPC list.
 	 */
 	private boolean isGameBarBoss(Actor opponent)
 	{
-		return opponent != null && (opponent == nativeBarNpc || opponent == tobBoss);
+		return opponent != null && (isNativeBarNpc(opponent) || opponent == tobBoss);
 	}
 
 	/**
-	 * Returns the loaded NPC that the game's boss bar is tracking, or null if there is none. The
-	 * result is cached, and the NPC list is only searched again when the tracked NPC ID changes or
-	 * an NPC spawns.
+	 * The NPC ID the game's boss bar tracks, or -1 when it tracks none or is turned off in the game
+	 * settings.
+	 */
+	private int nativeBarNpcId()
+	{
+		if (client.getVarbitValue(VarbitID.HPBAR_HUD_BOSS_DISABLED) != 0)
+		{
+			return -1;
+		}
+		return client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
+	}
+
+	/**
+	 * Whether the actor is an NPC with the ID the game's boss bar tracks. Several loaded NPCs can
+	 * share that ID.
+	 */
+	private boolean isNativeBarNpc(Actor actor)
+	{
+		if (!(actor instanceof NPC))
+		{
+			return false;
+		}
+		final int trackedId = nativeBarNpcId();
+		return trackedId != -1 && compositionId((NPC) actor) == trackedId;
+	}
+
+	/**
+	 * Returns the loaded NPC that the game's boss bar is tracking, or null if there is none. When
+	 * several NPCs share the tracked ID, the current opponent or the NPC you are attacking is
+	 * preferred. Otherwise the result is cached, and the NPC list is only searched again when the
+	 * tracked NPC ID changes or an NPC spawns.
 	 */
 	private NPC findNativeBarNpc()
 	{
-		final int trackedId = client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
+		final int trackedId = nativeBarNpcId();
 		if (trackedId == -1)
 		{
 			nativeBarNpc = null;
 			return null;
+		}
+
+		if (isNativeBarNpc(lastOpponent))
+		{
+			nativeBarNpc = (NPC) lastOpponent;
+			return nativeBarNpc;
+		}
+
+		final Player player = client.getLocalPlayer();
+		final Actor target = player != null ? player.getInteracting() : null;
+		if (isNativeBarNpc(target))
+		{
+			nativeBarNpc = (NPC) target;
+			return nativeBarNpc;
 		}
 
 		if (nativeBarNpc != null && compositionId(nativeBarNpc) == trackedId)
@@ -636,14 +681,13 @@ public class BossHealthBarPlugin extends Plugin
 			if (shouldShowBarFor(lastOpponent) && isNativeBarTracking(lastOpponent))
 			{
 				replace = true;
-				replacedNativeBarNpcId = client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
+				replacedNativeBarNpcId = nativeBarNpcId();
 			}
 			else
 			{
 				// After the boss dies and despawns, the game's bar can stay up on it while this bar
 				// plays its defeat animation, so keep it hidden until it tracks a different NPC.
-				replace = replacedNativeBarNpcId != -1
-					&& client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC) == replacedNativeBarNpcId;
+				replace = replacedNativeBarNpcId != -1 && nativeBarNpcId() == replacedNativeBarNpcId;
 			}
 		}
 
@@ -698,11 +742,12 @@ public class BossHealthBarPlugin extends Plugin
 	}
 
 	/**
-	 * Shows the game's boss bar again, if this plugin hid it.
+	 * Shows the game's boss bar again, if this plugin hid it and the game still tracks an NPC with
+	 * it. That way a bar the game no longer wants shown doesn't reappear with outdated health.
 	 */
 	private void restoreNativeBar()
 	{
-		if (!nativeBarHidden)
+		if (!nativeBarHidden || nativeBarNpcId() == -1)
 		{
 			return;
 		}
@@ -754,14 +799,7 @@ public class BossHealthBarPlugin extends Plugin
 	 */
 	boolean isNativeBarTracking(Actor opponent)
 	{
-		if (!(opponent instanceof NPC) || client.getVarbitValue(VarbitID.HPBAR_HUD_BOSS_DISABLED) != 0)
-		{
-			return false;
-		}
-
-		final int trackedId = client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
-		final NPCComposition composition = ((NPC) opponent).getComposition();
-		return trackedId != -1 && composition != null && trackedId == composition.getId();
+		return isNativeBarNpc(opponent);
 	}
 
 	/**
