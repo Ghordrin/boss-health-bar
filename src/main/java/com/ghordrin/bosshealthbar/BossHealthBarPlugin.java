@@ -26,7 +26,6 @@ package com.ghordrin.bosshealthbar;
 
 import com.google.inject.Provides;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
@@ -117,8 +116,9 @@ public class BossHealthBarPlugin extends Plugin
 	@Getter(AccessLevel.PACKAGE)
 	private Actor lastOpponent;
 
+	// When the last hit landed on the opponent, from System.currentTimeMillis(), or 0 if none.
 	@Getter(AccessLevel.PACKAGE)
-	private Instant lastHitTime;
+	private long lastHitMillis;
 
 	@Getter(AccessLevel.PACKAGE)
 	private int lastHitAmount;
@@ -126,10 +126,12 @@ public class BossHealthBarPlugin extends Plugin
 	@Getter(AccessLevel.PACKAGE)
 	private int comboDamage;
 
+	// When your last hit landed, from System.currentTimeMillis(), or 0 if none.
 	@Getter(AccessLevel.PACKAGE)
-	private Instant lastDamageDealtTime;
+	private long lastDamageDealtMillis;
 
-	private Instant lastInteractionLostTime;
+	// When you stopped interacting with the opponent, from System.currentTimeMillis(), or 0 if you haven't.
+	private long lastInteractionLostMillis;
 	private boolean nativeBarHidden;
 	private NPC nativeBarNpc;
 	private int nativeBarSearchedId = -1;
@@ -199,8 +201,8 @@ public class BossHealthBarPlugin extends Plugin
 		recentSpawnTicks.clear();
 		superiors.clear();
 		superiorMessageTick = -1;
-		lastHitTime = null;
-		lastInteractionLostTime = null;
+		lastHitMillis = 0;
+		lastInteractionLostMillis = 0;
 		resetComboDamage();
 	}
 
@@ -244,12 +246,12 @@ public class BossHealthBarPlugin extends Plugin
 
 		if (opponent == null)
 		{
-			lastInteractionLostTime = Instant.now();
+			lastInteractionLostMillis = System.currentTimeMillis();
 			log.debug("Interaction lost with {}, will clear after {}s if not resumed", lastOpponent, config.hideDelay());
 			return;
 		}
 
-		lastInteractionLostTime = null;
+		lastInteractionLostMillis = 0;
 
 		if (opponent == lastOpponent)
 		{
@@ -485,18 +487,18 @@ public class BossHealthBarPlugin extends Plugin
 			return;
 		}
 
-		final Instant now = Instant.now();
-		lastHitTime = now;
+		final long now = System.currentTimeMillis();
+		lastHitMillis = now;
 		lastHitAmount = hitsplat.getAmount();
 
 		if (hitsplat.isMine())
 		{
-			if (lastDamageDealtTime == null || Duration.between(lastDamageDealtTime, now).compareTo(DAMAGE_COMBO_WINDOW) > 0)
+			if (lastDamageDealtMillis == 0 || now - lastDamageDealtMillis > DAMAGE_COMBO_WINDOW.toMillis())
 			{
 				comboDamage = 0;
 			}
 			comboDamage += hitsplat.getAmount();
-			lastDamageDealtTime = now;
+			lastDamageDealtMillis = now;
 		}
 	}
 
@@ -603,14 +605,14 @@ public class BossHealthBarPlugin extends Plugin
 
 		log.debug("Opponent {} despawned, clearing", lastOpponent);
 		lastOpponent = null;
-		lastInteractionLostTime = null;
+		lastInteractionLostMillis = 0;
 		resetComboDamage();
 	}
 
 	private void resetComboDamage()
 	{
 		comboDamage = 0;
-		lastDamageDealtTime = null;
+		lastDamageDealtMillis = 0;
 	}
 
 	/**
@@ -633,9 +635,9 @@ public class BossHealthBarPlugin extends Plugin
 			&& player != null
 			&& lastOpponent != findNativeBarNpc()
 			&& lastOpponent != findTobBoss()
-			&& lastInteractionLostTime != null
+			&& lastInteractionLostMillis != 0
 			&& player.getInteracting() == null
-			&& Duration.between(lastInteractionLostTime, Instant.now()).compareTo(Duration.ofSeconds(config.hideDelay())) > 0)
+			&& System.currentTimeMillis() - lastInteractionLostMillis > config.hideDelay() * 1000L)
 		{
 			log.debug("Opponent {} timed out after {}s with no interaction, clearing", lastOpponent, config.hideDelay());
 			lastOpponent = null;
@@ -655,7 +657,7 @@ public class BossHealthBarPlugin extends Plugin
 		if (gameBarBoss != null && !gameBarBoss.isDead() && gameBarBoss != lastOpponent)
 		{
 			setOpponent(gameBarBoss);
-			lastInteractionLostTime = null;
+			lastInteractionLostMillis = 0;
 		}
 
 		updateNativeBar();

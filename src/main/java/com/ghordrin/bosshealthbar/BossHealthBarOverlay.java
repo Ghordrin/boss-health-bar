@@ -42,7 +42,6 @@ import java.awt.LinearGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.time.Duration;
-import java.time.Instant;
 import java.util.Arrays;
 import java.util.function.Consumer;
 import javax.inject.Inject;
@@ -190,6 +189,23 @@ class BossHealthBarOverlay extends Overlay
 	private int percentOnlyNpcId = -1;
 	private boolean percentOnly;
 
+	// The name and max hitpoints read for infoActor while it had the NPC ID infoNpcId (-1 for players).
+	private Actor infoActor;
+	private int infoNpcId = -1;
+	private String infoName;
+	private Integer infoMaxHealth;
+
+	// The marker varbit values and max health that phaseMarkers was worked out from.
+	private final int[] phaseMarkerValues = new int[PHASE_MARKER_VARBITS.length];
+	private int phaseMarkerMaxHealth;
+	private float[] phaseMarkers = NO_PHASE_MARKERS;
+
+	// The last name shortened to fit the header, and what it was shortened for.
+	private String ellipsizedSource;
+	private Font ellipsizedFont;
+	private int ellipsizedWidth;
+	private String ellipsizedName;
+
 	// The current colors, rebuilt after a config change, and colors mixed from them.
 	private ThemeColors themeColors;
 	private Color healColor;
@@ -235,6 +251,7 @@ class BossHealthBarOverlay extends Overlay
 	void reset()
 	{
 		trackedOpponent = null;
+		infoActor = null;
 		lastRenderNanos = 0;
 		resetAnimation();
 		invalidateColors();
@@ -482,22 +499,9 @@ class BossHealthBarOverlay extends Overlay
 			return null;
 		}
 
-		Integer maxHealth = null;
-		String name = Text.removeTags(opponent.getName());
-		if (opponent instanceof NPC)
-		{
-			NPC npc = (NPC) opponent;
-			NPCComposition composition = npc.getTransformedComposition();
-			if (composition != null)
-			{
-				String longName = composition.getStringValue(ParamID.NPC_HP_NAME);
-				if (!Strings.isNullOrEmpty(longName))
-				{
-					name = longName;
-				}
-			}
-			maxHealth = npcManager.getHealth(npc.getId());
-		}
+		updateOpponentInfo(opponent);
+		final String name = infoName;
+		final Integer maxHealth = infoMaxHealth;
 
 		// The game's boss bar knows the exact hitpoints, and bosses using it may not send the
 		// usual overhead health updates, so prefer it while it tracks this opponent.
@@ -528,8 +532,49 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
+	 * Reads the opponent's name and max hitpoints, unless they were already read for this opponent
+	 * in its current form. The name is the NPC's longer health bar name when it has one.
+	 */
+	private void updateOpponentInfo(Actor opponent)
+	{
+		final int npcId = opponent instanceof NPC ? ((NPC) opponent).getId() : -1;
+		if (opponent == infoActor && npcId == infoNpcId)
+		{
+			return;
+		}
+
+		String name = Text.removeTags(opponent.getName());
+		Integer maxHealth = null;
+		boolean complete = true;
+		if (opponent instanceof NPC)
+		{
+			final NPCComposition composition = ((NPC) opponent).getTransformedComposition();
+			if (composition != null)
+			{
+				final String longName = composition.getStringValue(ParamID.NPC_HP_NAME);
+				if (!Strings.isNullOrEmpty(longName))
+				{
+					name = longName;
+				}
+			}
+			else
+			{
+				// The form isn't known yet, so read it again next frame.
+				complete = false;
+			}
+			maxHealth = npcManager.getHealth(npcId);
+		}
+
+		infoName = name;
+		infoMaxHealth = maxHealth;
+		infoActor = complete ? opponent : null;
+		infoNpcId = npcId;
+	}
+
+	/**
 	 * Returns the positions of the game's boss bar phase markers as fractions of the bar, placed
 	 * the same way the game places them: a marker for hitpoint value v sits at (v - 1) / max health.
+	 * The result is reused while the marker values and max health stay the same.
 	 */
 	private float[] readPhaseMarkers(int maxHealth)
 	{
@@ -538,11 +583,26 @@ class BossHealthBarOverlay extends Overlay
 			return NO_PHASE_MARKERS;
 		}
 
+		boolean changed = maxHealth != phaseMarkerMaxHealth;
+		for (int i = 0; i < PHASE_MARKER_VARBITS.length; i++)
+		{
+			final int value = client.getVarbitValue(PHASE_MARKER_VARBITS[i]);
+			if (value != phaseMarkerValues[i])
+			{
+				phaseMarkerValues[i] = value;
+				changed = true;
+			}
+		}
+		if (!changed)
+		{
+			return phaseMarkers;
+		}
+		phaseMarkerMaxHealth = maxHealth;
+
 		float[] markers = null;
 		int count = 0;
-		for (int varbit : PHASE_MARKER_VARBITS)
+		for (int value : phaseMarkerValues)
 		{
-			final int value = client.getVarbitValue(varbit);
 			if (value > 0 && value <= maxHealth + 1)
 			{
 				if (markers == null)
@@ -552,7 +612,8 @@ class BossHealthBarOverlay extends Overlay
 				markers[count++] = clamp01((value - 1) / (float) maxHealth);
 			}
 		}
-		return markers == null ? NO_PHASE_MARKERS : Arrays.copyOf(markers, count);
+		phaseMarkers = markers == null ? NO_PHASE_MARKERS : Arrays.copyOf(markers, count);
+		return phaseMarkers;
 	}
 
 	/**
@@ -615,8 +676,8 @@ class BossHealthBarOverlay extends Overlay
 
 		if (trailFraction > displayedFraction)
 		{
-			Instant lastHit = plugin.getLastHitTime();
-			boolean holding = lastHit != null && Duration.between(lastHit, Instant.now()).compareTo(TRAIL_HOLD) < 0;
+			final long lastHit = plugin.getLastHitMillis();
+			boolean holding = lastHit != 0 && System.currentTimeMillis() - lastHit < TRAIL_HOLD.toMillis();
 			if (!holding)
 			{
 				// Drain faster the larger the gap, with a minimum speed so the end doesn't crawl.
@@ -787,7 +848,7 @@ class BossHealthBarOverlay extends Overlay
 
 			graphics.setFont(nameFont);
 			FontMetrics nameMetrics = graphics.getFontMetrics();
-			String nameText = ellipsize(name, nameMetrics, right - left - reserved - levelWidth);
+			String nameText = ellipsizeName(name, nameMetrics, right - left - reserved - levelWidth);
 			drawShadowedText(graphics, nameText, left, baseline, colors.getText(), 1f);
 
 			if (levelText != null)
@@ -802,6 +863,22 @@ class BossHealthBarOverlay extends Overlay
 		{
 			drawDamageNumber(graphics, right, baseline, colors.getText());
 		}
+	}
+
+	/**
+	 * Returns {@link #ellipsize}'s result for the name, reusing the last result while the name, font
+	 * and available width are the same.
+	 */
+	private String ellipsizeName(String name, FontMetrics metrics, int maxWidth)
+	{
+		if (!name.equals(ellipsizedSource) || metrics.getFont() != ellipsizedFont || maxWidth != ellipsizedWidth)
+		{
+			ellipsizedName = ellipsize(name, metrics, maxWidth);
+			ellipsizedSource = name;
+			ellipsizedFont = metrics.getFont();
+			ellipsizedWidth = maxWidth;
+		}
+		return ellipsizedName;
 	}
 
 	/**
@@ -830,14 +907,14 @@ class BossHealthBarOverlay extends Overlay
 	 */
 	private void drawDamageNumber(Graphics2D graphics, int right, int baseline, Color color)
 	{
-		final Instant lastDamage = plugin.getLastDamageDealtTime();
+		final long lastDamage = plugin.getLastDamageDealtMillis();
 		final int damage = plugin.getComboDamage();
-		if (lastDamage == null || damage <= 0)
+		if (lastDamage == 0 || damage <= 0)
 		{
 			return;
 		}
 
-		final long elapsed = Duration.between(lastDamage, Instant.now()).toMillis();
+		final long elapsed = System.currentTimeMillis() - lastDamage;
 		final long window = BossHealthBarPlugin.DAMAGE_COMBO_WINDOW.toMillis();
 		if (elapsed >= window)
 		{
@@ -1006,13 +1083,13 @@ class BossHealthBarOverlay extends Overlay
 
 		if (config.flashOnBigHits() && maxHealth != null)
 		{
-			Instant lastHit = plugin.getLastHitTime();
-			if (lastHit != null && plugin.getLastHitAmount() >= maxHealth * BIG_HIT_FRACTION)
+			final long lastHit = plugin.getLastHitMillis();
+			if (lastHit != 0 && plugin.getLastHitAmount() >= maxHealth * BIG_HIT_FRACTION)
 			{
-				Duration since = Duration.between(lastHit, Instant.now());
-				if (since.compareTo(FLASH_DURATION) < 0)
+				final long since = System.currentTimeMillis() - lastHit;
+				if (since < FLASH_DURATION.toMillis())
 				{
-					float alpha = 1f - (since.toMillis() / (float) FLASH_DURATION.toMillis());
+					float alpha = 1f - (since / (float) FLASH_DURATION.toMillis());
 					graphics.setColor(withAlpha(FLASH_COLOR, Math.round(clamp01(alpha) * 0.8f * 255)));
 					graphics.drawRect(barX, y, barWidth - 1, height - 1);
 				}
