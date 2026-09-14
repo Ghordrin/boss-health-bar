@@ -40,9 +40,11 @@ import java.awt.GradientPaint;
 import java.awt.Graphics2D;
 import java.awt.LinearGradientPaint;
 import java.awt.RenderingHints;
+import java.awt.image.BufferedImage;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Arrays;
+import java.util.function.Consumer;
 import javax.inject.Inject;
 import net.runelite.api.Actor;
 import net.runelite.api.Client;
@@ -124,6 +126,17 @@ class BossHealthBarOverlay extends Overlay
 	private static final Color TRACK_TOP = new Color(6, 5, 5, 225);
 	private static final Color TRACK_BOTTOM = new Color(26, 22, 22, 225);
 	private static final Color HEAL_TINT = new Color(150, 235, 160);
+	private static final Color BACKDROP = new Color(0, 0, 0, 34);
+	private static final Color FRAME_OUTLINE = new Color(6, 5, 5);
+	private static final Color DIAMOND_OUTLINE = new Color(6, 5, 5, 170);
+	private static final Color TRACK_EDGE_SHADOW = new Color(0, 0, 0, 120);
+	private static final Color MARKER_SHADOW = new Color(0, 0, 0, 170);
+	private static final Color TEXT_SHADOW_FAR = new Color(0, 0, 0, 90);
+	private static final Color TEXT_SHADOW_NEAR = new Color(0, 0, 0, 200);
+	private static final Color FLASH_COLOR = new Color(1f, 0.95f, 0.85f);
+	private static final BasicStroke THIN_STROKE = new BasicStroke(1f);
+	// How far the cached bar images reach past the bar on every side, enough for the backdrop and end pieces.
+	private static final int BAR_IMAGE_PAD = 8;
 
 	private final Client client;
 	private final BossHealthBarPlugin plugin;
@@ -177,8 +190,18 @@ class BossHealthBarOverlay extends Overlay
 	private int percentOnlyNpcId = -1;
 	private boolean percentOnly;
 
-	// The current colors, rebuilt after a config change.
+	// The current colors, rebuilt after a config change, and colors mixed from them.
 	private ThemeColors themeColors;
+	private Color healColor;
+	private Color frameHighlightColor;
+	private Color markerColor;
+
+	// The backdrop and end pieces, drawn once for the bar size and frame color they were built for.
+	private BufferedImage backdropImage;
+	private BufferedImage endsImage;
+	private int barImageWidth;
+	private int barImageHeight;
+	private Color barImageFrameColor;
 
 	private FontStyle cachedFontStyle;
 	private int cachedTextSize;
@@ -259,6 +282,9 @@ class BossHealthBarOverlay extends Overlay
 				.hitpointsText(config.customHitpointsTextColor())
 				.defeatedText(config.customDefeatedTextColor())
 				.build();
+			healColor = lerp(themeColors.getFillHigh(), HEAL_TINT, 0.45f);
+			frameHighlightColor = withAlpha(brighten(themeColors.getFrame(), 0.35f), 120);
+			markerColor = withAlpha(brighten(themeColors.getFrame(), 0.55f), 235);
 		}
 		return themeColors;
 	}
@@ -391,7 +417,7 @@ class BossHealthBarOverlay extends Overlay
 
 		graphics.translate(shownInset, 0);
 		drawBar(graphics, state.maxHealth, barY, shownWidth, barHeight, colors,
-			defeated ? NO_PHASE_MARKERS : state.phaseMarkers, lowHealthPulse(defeated), fillProgress);
+			defeated ? NO_PHASE_MARKERS : state.phaseMarkers, lowHealthPulse(defeated), fillProgress, shownWidth == width);
 		graphics.translate(-shownInset, 0);
 
 		setOpacity(graphics, originalComposite, opacity * textOpacity);
@@ -837,11 +863,12 @@ class BossHealthBarOverlay extends Overlay
 	private static void drawShadowedText(Graphics2D graphics, String text, int x, int y, Color color, float alpha)
 	{
 		alpha = clamp01(alpha);
-		graphics.setColor(new Color(0, 0, 0, Math.round(90 * alpha)));
+		final boolean opaque = alpha >= 1f;
+		graphics.setColor(opaque ? TEXT_SHADOW_FAR : withAlpha(TEXT_SHADOW_FAR, Math.round(TEXT_SHADOW_FAR.getAlpha() * alpha)));
 		graphics.drawString(text, x + 2, y + 2);
-		graphics.setColor(new Color(0, 0, 0, Math.round(200 * alpha)));
+		graphics.setColor(opaque ? TEXT_SHADOW_NEAR : withAlpha(TEXT_SHADOW_NEAR, Math.round(TEXT_SHADOW_NEAR.getAlpha() * alpha)));
 		graphics.drawString(text, x + 1, y + 1);
-		graphics.setColor(new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.round(255 * alpha)));
+		graphics.setColor(opaque ? color : withAlpha(color, Math.round(255 * alpha)));
 		graphics.drawString(text, x, y);
 	}
 
@@ -857,9 +884,11 @@ class BossHealthBarOverlay extends Overlay
 	 * @param phaseMarkers marker positions as fractions of the bar
 	 * @param lowHealthPulse the strength of the low health effect this frame, from 0 (off) to 1
 	 * @param fillProgress how far the intro's fill sweep has got, from 0 (empty) to 1 (the real health)
+	 * @param useImageCache whether to draw the backdrop and end pieces from cached images, which is
+	 *                      skipped while the intro changes the width every frame
 	 */
 	private void drawBar(Graphics2D graphics, Integer maxHealth, int y, int width, int height, ThemeColors colors,
-		float[] phaseMarkers, float lowHealthPulse, float fillProgress)
+		float[] phaseMarkers, float lowHealthPulse, float fillProgress, boolean useImageCache)
 	{
 		final Color frameColor = colors.getFrame();
 		final int barX = CAP_WIDTH;
@@ -875,7 +904,15 @@ class BossHealthBarOverlay extends Overlay
 		final int fillWidth = Math.round(innerWidth * clamp01(displayedFraction) * fillProgress);
 
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		drawBackdrop(graphics, barX, y, barWidth, height);
+		if (useImageCache)
+		{
+			updateBarImages(width, height, frameColor);
+			graphics.drawImage(backdropImage, -BAR_IMAGE_PAD, y - BAR_IMAGE_PAD, null);
+		}
+		else
+		{
+			drawBackdrop(graphics, barX, y, barWidth, height);
+		}
 
 		if (lowHealthPulse > 0f && fillWidth > 0)
 		{
@@ -910,8 +947,7 @@ class BossHealthBarOverlay extends Overlay
 		final int healWidth = Math.round(innerWidth * clamp01(actualFraction) * fillProgress);
 		if (healWidth > fillWidth)
 		{
-			final Color heal = lerp(colors.getFillHigh(), HEAL_TINT, 0.45f);
-			graphics.setPaint(verticalSheen(innerY, innerHeight, heal, 0.35f, 0.3f));
+			graphics.setPaint(verticalSheen(innerY, innerHeight, healColor, 0.35f, 0.3f));
 			graphics.fillRect(innerX, innerY, healWidth, innerHeight);
 			graphics.setPaint(null);
 		}
@@ -931,28 +967,42 @@ class BossHealthBarOverlay extends Overlay
 		final int filledWidth = Math.max(fillWidth, healWidth);
 		if (filledWidth < innerWidth)
 		{
-			graphics.setColor(new Color(0, 0, 0, 120));
+			graphics.setColor(TRACK_EDGE_SHADOW);
 			graphics.drawLine(innerX + filledWidth, innerY, innerX + innerWidth - 1, innerY);
 		}
 
 		// While health is low, the frame color pulses towards the fill color.
-		final Color frame = lowHealthPulse > 0f ? lerp(frameColor, brighten(baseFill, 0.3f), 0.85f * lowHealthPulse) : frameColor;
-		drawFrame(graphics, barX, y, barWidth, height, frame);
+		graphics.setStroke(THIN_STROKE);
+		if (lowHealthPulse > 0f)
+		{
+			final Color frame = lerp(frameColor, brighten(baseFill, 0.3f), 0.85f * lowHealthPulse);
+			drawFrame(graphics, barX, y, barWidth, height, frame, withAlpha(brighten(frame, 0.35f), 120));
+		}
+		else
+		{
+			drawFrame(graphics, barX, y, barWidth, height, frameColor, frameHighlightColor);
+		}
 
 		// Each phase marker is a light line crossing the bar and extending past the frame, with a
 		// dark line beside it so it shows on both the fill and the empty track.
 		for (float marker : phaseMarkers)
 		{
 			final int markerX = innerX + Math.round((innerWidth - 1) * marker);
-			graphics.setColor(new Color(0, 0, 0, 170));
+			graphics.setColor(MARKER_SHADOW);
 			graphics.drawLine(markerX + 1, innerY, markerX + 1, innerY + innerHeight - 1);
-			graphics.setColor(withAlpha(brighten(frameColor, 0.55f), 235));
+			graphics.setColor(markerColor);
 			graphics.drawLine(markerX, y - 2, markerX, y + height + 1);
 		}
 
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		drawFinials(graphics, barX, y, barWidth, height, frameColor);
-		drawUnderline(graphics, barX, y + height + 1, barWidth, frameColor);
+		if (useImageCache)
+		{
+			graphics.drawImage(endsImage, -BAR_IMAGE_PAD, y - BAR_IMAGE_PAD, null);
+		}
+		else
+		{
+			drawEnds(graphics, barX, y, barWidth, height, frameColor);
+		}
 
 		if (config.flashOnBigHits() && maxHealth != null)
 		{
@@ -963,8 +1013,7 @@ class BossHealthBarOverlay extends Overlay
 				if (since.compareTo(FLASH_DURATION) < 0)
 				{
 					float alpha = 1f - (since.toMillis() / (float) FLASH_DURATION.toMillis());
-					graphics.setStroke(new BasicStroke(1f));
-					graphics.setColor(new Color(1f, 0.95f, 0.85f, clamp01(alpha) * 0.8f));
+					graphics.setColor(withAlpha(FLASH_COLOR, Math.round(clamp01(alpha) * 0.8f * 255)));
 					graphics.drawRect(barX, y, barWidth - 1, height - 1);
 				}
 			}
@@ -973,18 +1022,57 @@ class BossHealthBarOverlay extends Overlay
 
 	/**
 	 * Draws a 1 pixel frame in the given color, with a dark outline around it and a lighter top edge.
+	 *
+	 * @param highlightColor the color of the top edge
 	 */
-	private static void drawFrame(Graphics2D graphics, int x, int y, int width, int height, Color frameColor)
+	private static void drawFrame(Graphics2D graphics, int x, int y, int width, int height, Color frameColor,
+		Color highlightColor)
 	{
-		graphics.setStroke(new BasicStroke(1f));
-		graphics.setColor(new Color(6, 5, 5));
+		graphics.setColor(FRAME_OUTLINE);
 		graphics.drawRect(x - 1, y - 1, width + 1, height + 1);
 
 		graphics.setColor(frameColor);
 		graphics.drawRect(x, y, width - 1, height - 1);
 
-		graphics.setColor(withAlpha(brighten(frameColor, 0.35f), 120));
+		graphics.setColor(highlightColor);
 		graphics.drawLine(x + 1, y, x + width - 2, y);
+	}
+
+	/**
+	 * Rebuilds the cached backdrop and end piece images when the bar's size or frame color has changed.
+	 * These parts are antialiased shapes that look the same every frame, so they are drawn once.
+	 */
+	private void updateBarImages(int width, int height, Color frameColor)
+	{
+		if (backdropImage != null && width == barImageWidth && height == barImageHeight
+			&& frameColor.equals(barImageFrameColor))
+		{
+			return;
+		}
+
+		final int barX = CAP_WIDTH;
+		final int barWidth = width - CAP_WIDTH * 2;
+		backdropImage = barImage(width, height, g -> drawBackdrop(g, barX, BAR_IMAGE_PAD, barWidth, height));
+		endsImage = barImage(width, height, g -> drawEnds(g, barX, BAR_IMAGE_PAD, barWidth, height, frameColor));
+		barImageWidth = width;
+		barImageHeight = height;
+		barImageFrameColor = frameColor;
+	}
+
+	/**
+	 * Creates an image for part of the bar, padded by BAR_IMAGE_PAD on every side, and runs the
+	 * painter with the bar's top at y = BAR_IMAGE_PAD and its left edge at x = 0.
+	 */
+	private static BufferedImage barImage(int width, int height, Consumer<Graphics2D> painter)
+	{
+		final BufferedImage image = new BufferedImage(width + BAR_IMAGE_PAD * 2, height + BAR_IMAGE_PAD * 2,
+			BufferedImage.TYPE_INT_ARGB);
+		final Graphics2D g = image.createGraphics();
+		g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+		g.translate(BAR_IMAGE_PAD, 0);
+		painter.accept(g);
+		g.dispose();
+		return image;
 	}
 
 	/**
@@ -992,11 +1080,20 @@ class BossHealthBarOverlay extends Overlay
 	 */
 	private static void drawBackdrop(Graphics2D graphics, int barX, int y, int barWidth, int height)
 	{
+		graphics.setColor(BACKDROP);
 		for (int i = 3; i >= 1; i--)
 		{
-			graphics.setColor(new Color(0, 0, 0, 34));
 			graphics.fillRoundRect(barX - i * 2, y - i - 1, barWidth + i * 4, height + i * 2 + 2, height + i * 2, height + i * 2);
 		}
+	}
+
+	/**
+	 * Draws the end pieces and the underline.
+	 */
+	private static void drawEnds(Graphics2D graphics, int barX, int y, int barWidth, int height, Color frameColor)
+	{
+		drawFinials(graphics, barX, y, barWidth, height, frameColor);
+		drawUnderline(graphics, barX, y + height + 1, barWidth, frameColor);
 	}
 
 	/**
@@ -1039,8 +1136,8 @@ class BossHealthBarOverlay extends Overlay
 		graphics.fillPolygon(rightXs, ys, 4);
 		graphics.setPaint(null);
 
-		graphics.setStroke(new BasicStroke(1f));
-		graphics.setColor(new Color(6, 5, 5, 170));
+		graphics.setStroke(THIN_STROKE);
+		graphics.setColor(DIAMOND_OUTLINE);
 		graphics.drawPolygon(leftXs, ys, 4);
 		graphics.drawPolygon(rightXs, ys, 4);
 
