@@ -71,6 +71,17 @@ class BossHealthBarOverlay extends Overlay
 	private static final float TRAIL_MIN_DRAIN_PER_SECOND = 0.15f;
 	private static final Duration FLASH_DURATION = Duration.ofMillis(350);
 	private static final Duration FADE_IN_DURATION = Duration.ofMillis(300);
+	// The intro animation. Each part starts at its delay after the bar first appears: the bar rises
+	// into place, widens from its center, the fill sweeps up to the current health, and the text
+	// fades in last.
+	private static final int INTRO_SLIDE_DISTANCE = 14;
+	private static final Duration INTRO_SLIDE_DURATION = Duration.ofMillis(400);
+	private static final Duration INTRO_EXPAND_DELAY = Duration.ofMillis(80);
+	private static final Duration INTRO_EXPAND_DURATION = Duration.ofMillis(400);
+	private static final Duration INTRO_FILL_DELAY = Duration.ofMillis(380);
+	private static final Duration INTRO_FILL_DURATION = Duration.ofMillis(450);
+	private static final Duration INTRO_TEXT_DELAY = Duration.ofMillis(400);
+	private static final Duration INTRO_TEXT_DURATION = Duration.ofMillis(250);
 	private static final long DAMAGE_NUMBER_FADE_MILLIS = 400;
 	private static final float BIG_HIT_FRACTION = 0.08f;
 	private static final Duration DEFEAT_HOLD = Duration.ofMillis(1600);
@@ -78,6 +89,10 @@ class BossHealthBarOverlay extends Overlay
 	private static final String DEFEATED_TEXT = "Defeated";
 	private static final Duration LOW_HEALTH_PULSE_PERIOD = Duration.ofMillis(1100);
 	private static final float[] NO_PHASE_MARKERS = new float[0];
+	// With "Fit to game view" on, the most of the game view's width the bar and its ornaments take
+	// up, and the narrowest the bar gets, so the name still has room.
+	private static final float MAX_VIEWPORT_FRACTION = 0.85f;
+	private static final int MIN_FITTED_BAR_WIDTH = 160;
 
 	// NPCs with this param set to 1 have the game's boss bar show a percentage instead of exact
 	// hitpoints. There is no gameval constant for it.
@@ -108,8 +123,6 @@ class BossHealthBarOverlay extends Overlay
 
 	private static final Color TRACK_TOP = new Color(6, 5, 5, 225);
 	private static final Color TRACK_BOTTOM = new Color(26, 22, 22, 225);
-	private static final Color TEXT_COLOR = new Color(232, 226, 212);
-	private static final Color SUBTLE_TEXT_COLOR = new Color(200, 192, 176);
 	private static final Color HEAL_TINT = new Color(150, 235, 160);
 
 	private final Client client;
@@ -164,6 +177,9 @@ class BossHealthBarOverlay extends Overlay
 	private int percentOnlyNpcId = -1;
 	private boolean percentOnly;
 
+	// The current colors, rebuilt after a config change.
+	private ThemeColors themeColors;
+
 	private FontStyle cachedFontStyle;
 	private int cachedTextSize;
 	private Font nameFont;
@@ -202,6 +218,38 @@ class BossHealthBarOverlay extends Overlay
 		fadeStartNanos = 0;
 		defeatStartNanos = 0;
 		lastState = null;
+	}
+
+	/**
+	 * Makes the next frame read the theme and custom colors from the config again.
+	 */
+	void invalidateColors()
+	{
+		themeColors = null;
+	}
+
+	/**
+	 * Returns the colors of the selected theme, or the custom colors when the theme is Custom.
+	 */
+	private ThemeColors getThemeColors()
+	{
+		if (themeColors == null)
+		{
+			final HealthBarTheme theme = config.theme();
+			themeColors = theme.getColors() != null ? theme.getColors() : ThemeColors.builder()
+				.fillHigh(config.customFillHighColor())
+				.fillLow(config.customFillLowColor())
+				.trail(config.customTrailColor())
+				.frame(config.customFrameColor())
+				.ornament(config.customOrnamentColor())
+				.gem(config.customGemColor())
+				.text(config.customTextColor())
+				.levelText(config.customLevelTextColor())
+				.hitpointsText(config.customHitpointsTextColor())
+				.defeatedText(config.customDefeatedTextColor())
+				.build();
+		}
+		return themeColors;
 	}
 
 	@Override
@@ -274,7 +322,6 @@ class BossHealthBarOverlay extends Overlay
 
 		tick(defeated ? 0f : clamp01(state.ratio / (float) state.scale));
 
-		final int width = config.barWidth();
 		final int barHeight = config.barHeight();
 		updateFonts();
 		final float textScale = config.textSize() / 100f;
@@ -282,49 +329,65 @@ class BossHealthBarOverlay extends Overlay
 		final int headerHeight = showHeader ? Math.round(HEADER_HEIGHT * textScale) : 0;
 		final String hpText = defeated ? null : buildHitpointsText(state);
 		final int footerHeight = hpText != null || defeated ? Math.round(FOOTER_HEIGHT * textScale) : 0;
-		final HealthBarTheme theme = config.theme();
+		final ThemeColors colors = getThemeColors();
 
 		final OrnamentRenderer.Ornament ornament = ornamentRenderer.getOrnament(
-			config.ornamentStyle(), theme, ornamentScale(barHeight), barHeight / 2f + CAP_RISE + 0.5f);
+			config.ornamentStyle(), colors, ornamentScale(barHeight), barHeight / 2f + CAP_RISE + 0.5f);
 		// Each piece's anchor sits on the bar's center line, just overlapping the end piece's tip on its side.
 		final int leftExtent = ornament != null ? Math.max(0, ornament.left.anchorX - ORNAMENT_OVERLAP) : 0;
 		final int rightExtent = ornament != null
 			? Math.max(0, ornament.right.image.getWidth() - ornament.right.anchorX - ORNAMENT_OVERLAP) : 0;
+		final int width = barWidth(leftExtent + rightExtent);
 		final int barCenterOffset = CAP_RISE + barHeight / 2;
 		final int topOffset = ornament != null
 			? Math.max(0, Math.max(ornament.left.anchorY, ornament.right.anchorY) - (headerHeight + barCenterOffset)) : 0;
 		final int barY = headerHeight + CAP_RISE;
 
+		// The intro animation, timed from the first frame for this opponent.
+		final IntroAnimation intro = config.introAnimation();
+		final long introElapsed = fadeStartNanos == 0 ? Long.MAX_VALUE : now - fadeStartNanos;
+		final int slideOffset = intro.slide
+			? Math.round(INTRO_SLIDE_DISTANCE * (1f - easeOut(progress(introElapsed, Duration.ZERO, INTRO_SLIDE_DURATION)))) : 0;
+		final float expandProgress = intro.expand ? easeOut(progress(introElapsed, INTRO_EXPAND_DELAY, INTRO_EXPAND_DURATION)) : 1f;
+		final float fillProgress = intro.expand ? easeOut(progress(introElapsed, INTRO_FILL_DELAY, INTRO_FILL_DURATION)) : 1f;
+		final float textOpacity = intro.expand ? progress(introElapsed, INTRO_TEXT_DELAY, INTRO_TEXT_DURATION) : 1f;
+		// While expanding, the bar and its ornaments are drawn narrower and centered in the full width.
+		final int minShownWidth = Math.min(width, CAP_WIDTH * 2 + 4);
+		final int shownWidth = Math.round(minShownWidth + (width - minShownWidth) * expandProgress);
+		final int shownInset = (width - shownWidth) / 2;
+
 		final Composite originalComposite = graphics.getComposite();
-		final float opacity = fadeInOpacity() * defeatOpacity;
-		if (opacity < 1f)
-		{
-			graphics.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, clamp01(opacity)));
-		}
+		final float opacity = progress(introElapsed, Duration.ZERO, FADE_IN_DURATION) * defeatOpacity;
+		setOpacity(graphics, originalComposite, opacity);
 
 		// Antialiased text with fractional metrics, so resized RuneScape fonts stay evenly spaced too.
 		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 
-		graphics.translate(leftExtent, topOffset);
+		graphics.translate(leftExtent, topOffset + slideOffset);
 
 		if (showHeader)
 		{
+			setOpacity(graphics, originalComposite, opacity * textOpacity);
 			drawHeader(graphics, state.name, state.combatLevel, width,
-				headerHeight - Math.round(HEADER_BASELINE_GAP * textScale), theme);
+				headerHeight - Math.round(HEADER_BASELINE_GAP * textScale), colors);
+			setOpacity(graphics, originalComposite, opacity);
 		}
 
-		drawBar(graphics, state.scale, barY, width, barHeight, theme,
-			defeated ? NO_PHASE_MARKERS : state.phaseMarkers, lowHealthPulse(defeated));
+		graphics.translate(shownInset, 0);
+		drawBar(graphics, state.scale, barY, shownWidth, barHeight, colors,
+			defeated ? NO_PHASE_MARKERS : state.phaseMarkers, lowHealthPulse(defeated), fillProgress);
+		graphics.translate(-shownInset, 0);
 
+		setOpacity(graphics, originalComposite, opacity * textOpacity);
 		if (defeated)
 		{
 			graphics.setFont(hpFont);
 			FontMetrics metrics = graphics.getFontMetrics();
 			int textX = (width - metrics.stringWidth(DEFEATED_TEXT)) / 2;
 			int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
-			drawShadowedText(graphics, DEFEATED_TEXT, textX, baseline, brighten(theme.getAccentColor(), 0.45f), 1f);
+			drawShadowedText(graphics, DEFEATED_TEXT, textX, baseline, colors.getDefeatedText(), 1f);
 		}
 		else if (hpText != null)
 		{
@@ -332,21 +395,24 @@ class BossHealthBarOverlay extends Overlay
 			FontMetrics metrics = graphics.getFontMetrics();
 			int textX = width - CAP_WIDTH - TEXT_INSET - metrics.stringWidth(hpText);
 			int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
-			drawShadowedText(graphics, hpText, textX, baseline, SUBTLE_TEXT_COLOR, 1f);
+			drawShadowedText(graphics, hpText, textX, baseline, colors.getHitpointsText(), 1f);
 		}
+		setOpacity(graphics, originalComposite, opacity);
 
-		graphics.translate(-leftExtent, -topOffset);
+		graphics.translate(-leftExtent, -(topOffset + slideOffset));
 
 		int totalHeight = topOffset + barY + barHeight + CAP_RISE + footerHeight;
 		if (ornament != null)
 		{
 			final OrnamentRenderer.Piece left = ornament.left;
 			final OrnamentRenderer.Piece right = ornament.right;
+			// The size doesn't include the slide, so the overlay doesn't change size while it plays.
 			final int centerY = topOffset + headerHeight + barCenterOffset;
 			final int leftY = centerY - left.anchorY;
 			final int rightY = centerY - right.anchorY;
-			graphics.drawImage(left.image, leftExtent + ORNAMENT_OVERLAP - left.anchorX, leftY, null);
-			graphics.drawImage(right.image, leftExtent + width - ORNAMENT_OVERLAP - right.anchorX, rightY, null);
+			graphics.drawImage(left.image, leftExtent + shownInset + ORNAMENT_OVERLAP - left.anchorX, leftY + slideOffset, null);
+			graphics.drawImage(right.image, leftExtent + shownInset + shownWidth - ORNAMENT_OVERLAP - right.anchorX,
+				rightY + slideOffset, null);
 			totalHeight = Math.max(totalHeight,
 				Math.max(leftY + left.image.getHeight(), rightY + right.image.getHeight()));
 		}
@@ -525,6 +591,24 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
+	 * Returns the bar width to draw: the "Bar width" setting, narrowed while "Fit to game view" is on
+	 * so the bar and its ornaments take up at most MAX_VIEWPORT_FRACTION of the game view's width.
+	 *
+	 * @param ornamentWidth how far the ornaments reach past both ends of the bar, combined
+	 */
+	private int barWidth(int ornamentWidth)
+	{
+		final int width = config.barWidth();
+		final int viewportWidth = client.getViewportWidth();
+		if (!config.fitToGameView() || viewportWidth <= 0)
+		{
+			return width;
+		}
+		final int available = Math.round(viewportWidth * MAX_VIEWPORT_FRACTION) - ornamentWidth;
+		return Math.max(MIN_FITTED_BAR_WIDTH, Math.min(width, available));
+	}
+
+	/**
 	 * The ornament scale for a bar height: 1 up to a height of 8 pixels, then 4% larger per extra pixel.
 	 */
 	private static float ornamentScale(int barHeight)
@@ -605,23 +689,40 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
-	 * The bar's opacity from its fade in, going from 0 to 1 over FADE_IN_DURATION.
+	 * How far through a part of the intro animation is, from 0 before its delay to 1 once it has
+	 * lasted its duration.
+	 *
+	 * @param elapsedNanos the time since the intro started
 	 */
-	private float fadeInOpacity()
+	private static float progress(long elapsedNanos, Duration delay, Duration duration)
 	{
-		if (fadeStartNanos == 0)
-		{
-			return 1f;
-		}
-		float elapsed = (System.nanoTime() - fadeStartNanos) / (float) FADE_IN_DURATION.toNanos();
-		return clamp01(elapsed);
+		return clamp01((elapsedNanos - delay.toNanos()) / (float) duration.toNanos());
+	}
+
+	/**
+	 * Eases a progress from 0 to 1 so it starts quickly and settles gently into place.
+	 */
+	private static float easeOut(float t)
+	{
+		final float inverse = 1f - t;
+		return 1f - inverse * inverse * inverse;
+	}
+
+	/**
+	 * Draws what follows at the given opacity, or with the original composite when fully opaque.
+	 */
+	private static void setOpacity(Graphics2D graphics, Composite originalComposite, float opacity)
+	{
+		graphics.setComposite(opacity >= 1f
+			? originalComposite
+			: AlphaComposite.getInstance(AlphaComposite.SRC_OVER, clamp01(opacity)));
 	}
 
 	/**
 	 * Draws the row above the bar: the name on the left, followed by the combat level if enabled,
 	 * and the damage number on the right. A name too long for the space is cut off with an ellipsis.
 	 */
-	private void drawHeader(Graphics2D graphics, String name, int combatLevel, int width, int baseline, HealthBarTheme theme)
+	private void drawHeader(Graphics2D graphics, String name, int combatLevel, int width, int baseline, ThemeColors colors)
 	{
 		final int left = CAP_WIDTH + TEXT_INSET;
 		final int right = width - CAP_WIDTH - TEXT_INSET;
@@ -647,19 +748,19 @@ class BossHealthBarOverlay extends Overlay
 			graphics.setFont(nameFont);
 			FontMetrics nameMetrics = graphics.getFontMetrics();
 			String nameText = ellipsize(name, nameMetrics, right - left - reserved - levelWidth);
-			drawShadowedText(graphics, nameText, left, baseline, TEXT_COLOR, 1f);
+			drawShadowedText(graphics, nameText, left, baseline, colors.getText(), 1f);
 
 			if (levelText != null)
 			{
 				int levelX = left + nameMetrics.stringWidth(nameText) + LEVEL_GAP;
 				graphics.setFont(levelFont);
-				drawShadowedText(graphics, levelText, levelX, baseline, brighten(theme.getAccentColor(), 0.35f), 0.9f);
+				drawShadowedText(graphics, levelText, levelX, baseline, colors.getLevelText(), 0.9f);
 			}
 		}
 
 		if (config.showDamageNumber())
 		{
-			drawDamageNumber(graphics, right, baseline);
+			drawDamageNumber(graphics, right, baseline, colors.getText());
 		}
 	}
 
@@ -687,7 +788,7 @@ class BossHealthBarOverlay extends Overlay
 	 * Draws the total of your recent hits, right-aligned to the given x. It fades out over the
 	 * last part of the combo window and isn't drawn once the window has passed.
 	 */
-	private void drawDamageNumber(Graphics2D graphics, int right, int baseline)
+	private void drawDamageNumber(Graphics2D graphics, int right, int baseline, Color color)
 	{
 		final Instant lastDamage = plugin.getLastDamageDealtTime();
 		final int damage = plugin.getComboDamage();
@@ -712,7 +813,7 @@ class BossHealthBarOverlay extends Overlay
 		String text = String.valueOf(damage);
 		graphics.setFont(damageFont);
 		FontMetrics metrics = graphics.getFontMetrics();
-		drawShadowedText(graphics, text, right - metrics.stringWidth(text), baseline, TEXT_COLOR, alpha);
+		drawShadowedText(graphics, text, right - metrics.stringWidth(text), baseline, color, alpha);
 	}
 
 	/**
@@ -740,11 +841,12 @@ class BossHealthBarOverlay extends Overlay
 	 * @param height the bar height
 	 * @param phaseMarkers marker positions as fractions of the bar
 	 * @param lowHealthPulse the strength of the low health effect this frame, from 0 (off) to 1
+	 * @param fillProgress how far the intro's fill sweep has got, from 0 (empty) to 1 (the real health)
 	 */
-	private void drawBar(Graphics2D graphics, int scale, int y, int width, int height, HealthBarTheme theme,
-		float[] phaseMarkers, float lowHealthPulse)
+	private void drawBar(Graphics2D graphics, int scale, int y, int width, int height, ThemeColors colors,
+		float[] phaseMarkers, float lowHealthPulse, float fillProgress)
 	{
-		final Color accent = theme.getAccentColor();
+		final Color frameColor = colors.getFrame();
 		final int barX = CAP_WIDTH;
 		final int barWidth = width - CAP_WIDTH * 2;
 
@@ -753,9 +855,9 @@ class BossHealthBarOverlay extends Overlay
 		final int innerWidth = barWidth - 2;
 		final int innerHeight = height - 2;
 
-		final Color baseFill = lerp(theme.getLowColor(), theme.getHighColor(), clamp01(displayedFraction));
+		final Color baseFill = lerp(colors.getFillLow(), colors.getFillHigh(), clamp01(displayedFraction));
 		final Color fill = lowHealthPulse > 0f ? brighten(baseFill, 0.55f * lowHealthPulse) : baseFill;
-		final int fillWidth = Math.round(innerWidth * clamp01(displayedFraction));
+		final int fillWidth = Math.round(innerWidth * clamp01(displayedFraction) * fillProgress);
 
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
 		drawBackdrop(graphics, barX, y, barWidth, height);
@@ -782,18 +884,18 @@ class BossHealthBarOverlay extends Overlay
 
 		if (config.showDamageTrail() && trailFraction > displayedFraction)
 		{
-			Color trail = theme.getTrailColor();
-			int trailWidth = Math.round(innerWidth * clamp01(trailFraction));
+			Color trail = colors.getTrail();
+			int trailWidth = Math.round(innerWidth * clamp01(trailFraction) * fillProgress);
 			graphics.setPaint(verticalSheen(innerY, innerHeight, trail, 0.2f, 0.35f));
 			graphics.fillRect(innerX, innerY, trailWidth, innerHeight);
 			graphics.setPaint(null);
 		}
 
 		// After a heal, the new health shows at once as a lighter section that the fill grows into.
-		final int healWidth = Math.round(innerWidth * clamp01(actualFraction));
+		final int healWidth = Math.round(innerWidth * clamp01(actualFraction) * fillProgress);
 		if (healWidth > fillWidth)
 		{
-			final Color heal = lerp(theme.getHighColor(), HEAL_TINT, 0.45f);
+			final Color heal = lerp(colors.getFillHigh(), HEAL_TINT, 0.45f);
 			graphics.setPaint(verticalSheen(innerY, innerHeight, heal, 0.35f, 0.3f));
 			graphics.fillRect(innerX, innerY, healWidth, innerHeight);
 			graphics.setPaint(null);
@@ -819,7 +921,7 @@ class BossHealthBarOverlay extends Overlay
 		}
 
 		// While health is low, the frame color pulses towards the fill color.
-		final Color frame = lowHealthPulse > 0f ? lerp(accent, brighten(baseFill, 0.3f), 0.85f * lowHealthPulse) : accent;
+		final Color frame = lowHealthPulse > 0f ? lerp(frameColor, brighten(baseFill, 0.3f), 0.85f * lowHealthPulse) : frameColor;
 		drawFrame(graphics, barX, y, barWidth, height, frame);
 
 		// Each phase marker is a light line crossing the bar and extending past the frame, with a
@@ -829,13 +931,13 @@ class BossHealthBarOverlay extends Overlay
 			final int markerX = innerX + Math.round((innerWidth - 1) * marker);
 			graphics.setColor(new Color(0, 0, 0, 170));
 			graphics.drawLine(markerX + 1, innerY, markerX + 1, innerY + innerHeight - 1);
-			graphics.setColor(withAlpha(brighten(accent, 0.55f), 235));
+			graphics.setColor(withAlpha(brighten(frameColor, 0.55f), 235));
 			graphics.drawLine(markerX, y - 2, markerX, y + height + 1);
 		}
 
 		graphics.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-		drawFinials(graphics, barX, y, barWidth, height, accent);
-		drawUnderline(graphics, barX, y + height + 1, barWidth, accent);
+		drawFinials(graphics, barX, y, barWidth, height, frameColor);
+		drawUnderline(graphics, barX, y + height + 1, barWidth, frameColor);
 
 		if (config.flashOnBigHits())
 		{
@@ -857,16 +959,16 @@ class BossHealthBarOverlay extends Overlay
 	/**
 	 * Draws a 1 pixel frame in the given color, with a dark outline around it and a lighter top edge.
 	 */
-	private static void drawFrame(Graphics2D graphics, int x, int y, int width, int height, Color accent)
+	private static void drawFrame(Graphics2D graphics, int x, int y, int width, int height, Color frameColor)
 	{
 		graphics.setStroke(new BasicStroke(1f));
 		graphics.setColor(new Color(6, 5, 5));
 		graphics.drawRect(x - 1, y - 1, width + 1, height + 1);
 
-		graphics.setColor(accent);
+		graphics.setColor(frameColor);
 		graphics.drawRect(x, y, width - 1, height - 1);
 
-		graphics.setColor(withAlpha(brighten(accent, 0.35f), 120));
+		graphics.setColor(withAlpha(brighten(frameColor, 0.35f), 120));
 		graphics.drawLine(x + 1, y, x + width - 2, y);
 	}
 
@@ -901,7 +1003,7 @@ class BossHealthBarOverlay extends Overlay
 	 * Draws the end pieces on both sides: a thin plate reaching just above and below the bar, and a
 	 * small diamond outside it.
 	 */
-	private static void drawFinials(Graphics2D graphics, int barX, int y, int barWidth, int height, Color accent)
+	private static void drawFinials(Graphics2D graphics, int barX, int y, int barWidth, int height, Color frameColor)
 	{
 		final int top = y - CAP_RISE;
 		final int bottom = y + height + CAP_RISE;
@@ -909,7 +1011,7 @@ class BossHealthBarOverlay extends Overlay
 		final int rightEdge = barX + barWidth;
 		final int diamond = DIAMOND_RADIUS;
 
-		graphics.setPaint(new GradientPaint(0, top, brighten(accent, 0.35f), 0, bottom, darken(accent, 0.35f)));
+		graphics.setPaint(new GradientPaint(0, top, brighten(frameColor, 0.35f), 0, bottom, darken(frameColor, 0.35f)));
 		graphics.fillRect(barX - CAP_PLATE_WIDTH, top, CAP_PLATE_WIDTH, bottom - top);
 		graphics.fillRect(rightEdge, top, CAP_PLATE_WIDTH, bottom - top);
 
@@ -928,7 +1030,7 @@ class BossHealthBarOverlay extends Overlay
 		graphics.drawPolygon(rightXs, ys, 4);
 
 		// A highlight pixel near the top of each diamond.
-		graphics.setColor(withAlpha(brighten(accent, 0.7f), 200));
+		graphics.setColor(withAlpha(brighten(frameColor, 0.7f), 200));
 		graphics.fillRect(leftCx, midY - diamond + 1, 1, 1);
 		graphics.fillRect(rightCx, midY - diamond + 1, 1, 1);
 	}
@@ -936,12 +1038,12 @@ class BossHealthBarOverlay extends Overlay
 	/**
 	 * Draws a 1 pixel line below the bar that fades out towards both ends.
 	 */
-	private static void drawUnderline(Graphics2D graphics, int barX, int y, int barWidth, Color accent)
+	private static void drawUnderline(Graphics2D graphics, int barX, int y, int barWidth, Color frameColor)
 	{
 		graphics.setPaint(new LinearGradientPaint(
 			barX, 0, barX + barWidth, 0,
 			new float[]{0f, 0.5f, 1f},
-			new Color[]{withAlpha(accent, 0), withAlpha(brighten(accent, 0.2f), 80), withAlpha(accent, 0)}));
+			new Color[]{withAlpha(frameColor, 0), withAlpha(brighten(frameColor, 0.2f), 80), withAlpha(frameColor, 0)}));
 		graphics.fillRect(barX, y + 1, barWidth, 1);
 		graphics.setPaint(null);
 	}

@@ -45,7 +45,7 @@ import java.util.function.Consumer;
 /**
  * Builds the ornaments drawn at both ends of the bar. The godsword style draws a hilt on the left
  * and a blade tip on the right. Pieces are drawn from vector shapes into images, which are cached
- * until the style, theme, scale or bar height changes.
+ * until the style, colors, scale or bar height changes.
  */
 class OrnamentRenderer
 {
@@ -88,7 +88,7 @@ class OrnamentRenderer
 	private static final Color STEEL = new Color(214, 216, 222);
 
 	private OrnamentStyle cachedStyle;
-	private HealthBarTheme cachedTheme;
+	private ThemeColors cachedColors;
 	private float cachedScale;
 	private float cachedBarHalfExtent;
 	private Ornament cached;
@@ -99,33 +99,33 @@ class OrnamentRenderer
 	 * @param scale the size multiplier for the pieces
 	 * @param barHalfExtent half the height of the bar including its end plates, in pixels
 	 */
-	Ornament getOrnament(OrnamentStyle style, HealthBarTheme theme, float scale, float barHalfExtent)
+	Ornament getOrnament(OrnamentStyle style, ThemeColors colors, float scale, float barHalfExtent)
 	{
 		if (style == null || style == OrnamentStyle.NONE)
 		{
 			return null;
 		}
 
-		if (cached == null || style != cachedStyle || theme != cachedTheme || scale != cachedScale
+		if (cached == null || style != cachedStyle || !colors.equals(cachedColors) || scale != cachedScale
 			|| barHalfExtent != cachedBarHalfExtent)
 		{
-			cached = buildGodsword(theme, scale, barHalfExtent);
+			cached = buildGodsword(colors, scale, barHalfExtent);
 			cachedStyle = style;
-			cachedTheme = theme;
+			cachedColors = colors;
 			cachedScale = scale;
 			cachedBarHalfExtent = barHalfExtent;
 		}
 		return cached;
 	}
 
-	private static Ornament buildGodsword(HealthBarTheme theme, float scale, float barHalfExtent)
+	private static Ornament buildGodsword(ThemeColors colors, float scale, float barHalfExtent)
 	{
 		// The blade tip covers the right end piece, so its height has to match the bar's.
 		final float half = barHalfExtent / scale;
 		final float length = Math.max(12f, half * 2.6f);
-		final Piece hilt = rasterise(-29f, -22f, 7f, 22f, scale, g -> drawGodswordHilt(g, theme));
+		final Piece hilt = rasterise(-29f, -22f, 7f, 22f, scale, g -> drawGodswordHilt(g, colors));
 		final Piece tip = rasterise(-9f, -half - 1.5f, length + 1.5f, half + 1.5f, scale,
-			g -> drawBladeTip(g, theme, half, length));
+			g -> drawBladeTip(g, colors, half, length));
 		return new Ornament(hilt, tip);
 	}
 
@@ -154,12 +154,12 @@ class OrnamentRenderer
 
 	/**
 	 * Draws the godsword hilt: a guard over the bar's left end piece, a wrapped grip and a diamond
-	 * pommel, with gems in the theme's fill color.
+	 * pommel, with gems in the gem color.
 	 */
-	private static void drawGodswordHilt(Graphics2D g, HealthBarTheme theme)
+	private static void drawGodswordHilt(Graphics2D g, ThemeColors colors)
 	{
-		final Color accent = theme.getAccentColor();
-		final Color gemColor = theme.getHighColor();
+		final Color metalColor = colors.getOrnament();
+		final Color gemColor = colors.getGem();
 		// The guard's center x, over the end piece's diamond.
 		final float gx = 1f;
 
@@ -199,8 +199,8 @@ class OrnamentRenderer
 		g.setClip(clip);
 		outline(g, grip);
 
-		metal(g, pommel, accent, -5.5f, 5.5f);
-		metal(g, guard, accent, -20f, 20f);
+		metal(g, pommel, metalColor, -5.5f, 5.5f);
+		metal(g, guard, metalColor, -20f, 20f);
 
 		gem(g, gx, 0f, 2.4f, gemColor);
 		gem(g, -23f, 0f, 1.5f, gemColor);
@@ -212,9 +212,9 @@ class OrnamentRenderer
 	 * @param half half the blade's height
 	 * @param length how far the tip extends past the anchor
 	 */
-	private static void drawBladeTip(Graphics2D g, HealthBarTheme theme, float half, float length)
+	private static void drawBladeTip(Graphics2D g, ThemeColors colors, float half, float length)
 	{
-		final Color steel = lerp(theme.getAccentColor(), STEEL, 0.55f);
+		final Color steel = lerp(colors.getOrnament(), STEEL, 0.55f);
 
 		final Path2D tip = new Path2D.Float();
 		tip.moveTo(-8f, -half);

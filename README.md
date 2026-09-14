@@ -15,6 +15,9 @@ A RuneLite plugin that replaces the opponent health bar with a themed bar.
   refill the bar gradually.
 - **Defeat animation** — when the opponent dies, the empty bar stays with a
   "Defeated" label for a moment, then fades out.
+- **Intro animation** — when the bar appears it rises into place, widens from
+  its center and sweeps the fill up to the opponent's health. It can also just
+  slide in, just expand, or only fade in.
 - **Low health effect** — the fill pulses and glows once the opponent's health
   is at or below a set threshold (25% by default).
 - **Fonts** — serif, sans-serif or the RuneScape font, with adjustable text
@@ -23,9 +26,14 @@ A RuneLite plugin that replaces the opponent health bar with a themed bar.
   Abyssal, Obsidian, Verdant, Venom, Sunforged and Duskrose. Each theme has
   its own fill, trail and frame colors, and in most themes the fill color
   changes as the opponent's health drops.
+- **Custom colors** — choose the Custom theme to pick every color with a color
+  picker: the fill at full and low health, damage trail, frame, ornament metal
+  and gems, and each piece of text.
 - **Optional extras** (off by default) — the combat level next to the name,
   hitpoints text below the bar (percentage, value when the max hitpoints are
   known, or both), and a border flash on big hits.
+- **Fit to game view** — in fixed mode or a small window, the bar gets narrower
+  so it doesn't take up too much of the game view.
 - The bar can be moved like any other RuneLite overlay.
 
 ## How it works
@@ -35,6 +43,10 @@ The bar follows the NPC you are interacting with, the same way RuneLite's
 boss spawns, doesn't move the bar away from a living boss. Health is read from
 the game's health ratio and scale, and converted to hitpoints using RuneLite's
 NPC hitpoints data when the max hitpoints are known.
+
+With "Only show for bosses" on, superior slayer monsters you spawn also get the
+bar, whatever their combat level. The plugin spots them from the game message
+sent when one appears, and picks the NPC that spawned closest to you.
 
 The plugin only shows information the game already shows. It doesn't predict
 mechanics or add timers.
@@ -64,12 +76,13 @@ then hidden for those bosses, so two bars aren't shown at once.
 Right-click the bar, or find "Modern Boss Healthbar" in the RuneLite plugin
 panel, to configure:
 
-- **Appearance** — theme, ornaments, bar width and height, damage trail, phase
-  markers, flash on big hits, defeat animation, low health effect and
+- **Appearance** — theme, ornaments, bar width and height, fit to game view, damage trail, phase
+  markers, flash on big hits, intro animation, defeat animation, low health effect and
   threshold, heal animation speed
+- **Custom colors** — the colors used by the Custom theme
 - **Text** — font, text size, whether to show the name, combat level and damage
   number, hitpoints text (none / percentage / hitpoints / both)
 - **Behaviour** — only show for bosses and the minimum combat level for that,
-  how long the bar stays after you stop attacking, whether to replace the
+  whether to also show it for superior slayer monsters, how long the bar stays after you stop attacking, whether to replace the
   game's boss health bars, and whether to hide the "Opponent Information"
   health bar

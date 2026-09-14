@@ -24,6 +24,7 @@
  */
 package com.ghordrin.bosshealthbar;
 
+import static com.ghordrin.bosshealthbar.ColorUtil.brighten;
 import java.awt.Color;
 
 public enum HealthBarTheme
@@ -37,53 +38,53 @@ public enum HealthBarTheme
 	VERDANT("Verdant", 0x2E9E5A, 0xB8B02A, 0x5A8A5E, 0xF4ECB0),
 	VENOM("Venom", 0x8CC81E, 0x4E8A14, 0x3E4A32, 0xE8F070),
 	SUNFORGED("Sunforged", 0xE0A42A, 0xC0681A, 0xB08A4E, 0xFFF4D6),
-	DUSKROSE("Duskrose", 0xC23C6E, 0x7E1E48, 0x8C6A78, 0xF6C8D8);
+	DUSKROSE("Duskrose", 0xC23C6E, 0x7E1E48, 0x8C6A78, 0xF6C8D8),
+	/**
+	 * Uses the colors from the "Custom colors" config section instead of fixed colors.
+	 */
+	CUSTOM("Custom");
 
 	private final String label;
-	private final Color highColor;
-	private final Color lowColor;
-	private final Color accentColor;
-	private final Color trailColor;
+	// Null for CUSTOM, whose colors come from the config.
+	private final ThemeColors colors;
 
-	HealthBarTheme(String label, int highColor, int lowColor, int accentColor, int trailColor)
+	/**
+	 * A theme without fixed colors, whose colors the overlay reads from the config.
+	 */
+	HealthBarTheme(String label)
 	{
 		this.label = label;
-		this.highColor = new Color(highColor);
-		this.lowColor = new Color(lowColor);
-		this.accentColor = new Color(accentColor);
-		this.trailColor = new Color(trailColor);
+		this.colors = null;
 	}
 
 	/**
-	 * The fill color at full health. Also used for the gems on the godsword ornament.
+	 * A built-in theme. The frame color is also used for the ornament metal, and a lighter shade of it
+	 * for the combat level and "Defeated" label. The full health fill color is used for the gems.
 	 */
-	public Color getHighColor()
+	HealthBarTheme(String label, int fillHigh, int fillLow, int frame, int trail)
 	{
-		return highColor;
+		this.label = label;
+		final Color frameColor = new Color(frame);
+		this.colors = ThemeColors.builder()
+			.fillHigh(new Color(fillHigh))
+			.fillLow(new Color(fillLow))
+			.trail(new Color(trail))
+			.frame(frameColor)
+			.ornament(frameColor)
+			.gem(new Color(fillHigh))
+			.text(ThemeColors.DEFAULT_TEXT)
+			.levelText(brighten(frameColor, 0.35f))
+			.hitpointsText(ThemeColors.DEFAULT_HITPOINTS_TEXT)
+			.defeatedText(brighten(frameColor, 0.45f))
+			.build();
 	}
 
 	/**
-	 * The fill color at zero health. The fill blends from the high color to this as health drops.
+	 * The theme's colors, or null for {@link #CUSTOM}.
 	 */
-	public Color getLowColor()
+	ThemeColors getColors()
 	{
-		return lowColor;
-	}
-
-	/**
-	 * The color of the bar's frame, end pieces, phase markers and ornament metal.
-	 */
-	public Color getAccentColor()
-	{
-		return accentColor;
-	}
-
-	/**
-	 * The color of the damage trail.
-	 */
-	public Color getTrailColor()
-	{
-		return trailColor;
+		return colors;
 	}
 
 	@Override

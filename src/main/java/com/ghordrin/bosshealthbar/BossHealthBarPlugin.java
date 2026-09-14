@@ -27,17 +27,23 @@ package com.ghordrin.bosshealthbar;
 import com.google.inject.Provides;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import javax.inject.Inject;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Actor;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.Hitsplat;
 import net.runelite.api.NPC;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
 import net.runelite.api.events.BeforeRender;
+import net.runelite.api.events.ChatMessage;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.InteractingChanged;
@@ -51,10 +57,10 @@ import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
-
 @Slf4j
 @PluginDescriptor(
 	name = "Modern Boss Healthbar",
@@ -73,6 +79,13 @@ public class BossHealthBarPlugin extends Plugin
 	private static final int TOB_PROGRESS_BOSS_HEALTH = 1;
 	// How far from the player, in tiles, to look for the boss of the current Theatre of Blood room.
 	private static final int TOB_BOSS_SEARCH_DISTANCE = 32;
+	// The game message sent when a superior slayer monster spawns for you. It arrives wrapped in
+	// color markers, such as "@mes_hl_red@A superior foe has appeared...</col>".
+	private static final String SUPERIOR_SPAWN_MESSAGE = "A superior foe has appeared";
+	// How many ticks apart the superior's spawn and its message may be to still be matched.
+	private static final int SUPERIOR_MATCH_TICKS = 2;
+	// How far from the player, in tiles, a newly spawned NPC can be to count as your superior.
+	private static final int SUPERIOR_SEARCH_DISTANCE = 15;
 	private static final String VANILLA_OVERLAY_GROUP = "opponentinfo";
 	private static final String VANILLA_OVERLAY_KEY = "showOpponentHealthOverlay";
 
@@ -119,6 +132,11 @@ public class BossHealthBarPlugin extends Plugin
 	private boolean tobBarHidden;
 	private NPC tobBoss;
 	private boolean tobBossSearchNeeded = true;
+	// NPCs that spawned in the last few ticks, with the tick they spawned on.
+	private final Map<NPC, Integer> recentSpawnTicks = new HashMap<>();
+	// Superior slayer monsters you spawned that are still loaded.
+	private final Set<NPC> superiors = new HashSet<>();
+	private int superiorMessageTick = -1;
 
 	@Provides
 	BossHealthBarConfig provideConfig(ConfigManager configManager)
@@ -149,9 +167,25 @@ public class BossHealthBarPlugin extends Plugin
 		replacedNativeBarNpcId = -1;
 		tobBoss = null;
 		tobBossSearchNeeded = true;
+		recentSpawnTicks.clear();
+		superiors.clear();
+		superiorMessageTick = -1;
 		lastHitTime = null;
 		lastInteractionLostTime = null;
 		resetComboDamage();
+	}
+
+	/**
+	 * Makes the overlay read its colors again when any setting of this plugin changes, so a new
+	 * theme or custom color shows on the next frame.
+	 */
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (BossHealthBarConfig.GROUP.equals(event.getGroup()))
+		{
+			overlay.invalidateColors();
+		}
 	}
 
 	@Subscribe
@@ -380,6 +414,67 @@ public class BossHealthBarPlugin extends Plugin
 		// The boss may have just appeared or reappeared, so search for it again.
 		nativeBarSearchedId = -1;
 		tobBossSearchNeeded = true;
+		recentSpawnTicks.put(event.getNpc(), client.getTickCount());
+	}
+
+	/**
+	 * Notes when the game says a superior slayer monster has spawned for you. The NPC itself is
+	 * picked out on the game tick, by {@link #markSuperior()}.
+	 */
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		if ((event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM)
+			&& event.getMessage().contains(SUPERIOR_SPAWN_MESSAGE))
+		{
+			superiorMessageTick = client.getTickCount();
+			log.debug("Superior spawn message on tick {}", superiorMessageTick);
+		}
+	}
+
+	/**
+	 * After a superior spawn message, marks the attackable NPC that spawned closest to the player
+	 * within a few ticks of the message as a superior. The message and the spawn can arrive in either
+	 * order, so this keeps trying for {@link #SUPERIOR_MATCH_TICKS} ticks.
+	 */
+	private void markSuperior()
+	{
+		final int tick = client.getTickCount();
+		recentSpawnTicks.values().removeIf(spawnTick -> tick - spawnTick > SUPERIOR_MATCH_TICKS);
+
+		if (superiorMessageTick == -1)
+		{
+			return;
+		}
+
+		final Player player = client.getLocalPlayer();
+		NPC nearest = null;
+		int nearestDistance = Integer.MAX_VALUE;
+		if (player != null)
+		{
+			for (NPC npc : recentSpawnTicks.keySet())
+			{
+				final int distance = npc.getWorldLocation().distanceTo(player.getWorldLocation());
+				if (!npc.isDead() && !superiors.contains(npc) && isAttackable(npc)
+					&& distance <= SUPERIOR_SEARCH_DISTANCE && distance < nearestDistance)
+				{
+					nearest = npc;
+					nearestDistance = distance;
+				}
+			}
+		}
+
+		if (nearest != null)
+		{
+			superiors.add(nearest);
+			superiorMessageTick = -1;
+			log.debug("Marked {} as a superior", nearest.getName());
+		}
+		else if (tick - superiorMessageTick >= SUPERIOR_MATCH_TICKS)
+		{
+			superiorMessageTick = -1;
+			log.debug("No spawned NPC found for the superior spawn message");
+		}
 	}
 
 	@Subscribe
@@ -406,6 +501,8 @@ public class BossHealthBarPlugin extends Plugin
 			tobBoss = null;
 		}
 		tobBossSearchNeeded = true;
+		recentSpawnTicks.remove(event.getNpc());
+		superiors.remove(event.getNpc());
 
 		if (event.getNpc() != lastOpponent)
 		{
@@ -436,6 +533,8 @@ public class BossHealthBarPlugin extends Plugin
 			// The room's boss may have only come within range as the player walked in.
 			tobBossSearchNeeded = true;
 		}
+
+		markSuperior();
 
 		if (lastOpponent != null
 			&& lastOpponent != findNativeBarNpc()
@@ -588,13 +687,17 @@ public class BossHealthBarPlugin extends Plugin
 
 	/**
 	 * Whether the opponent should get a bar: it must have a name and, when "Only show for bosses"
-	 * is on, either meet the minimum combat level or be shown by a game boss bar.
+	 * is on, either meet the minimum combat level, be shown by a game boss bar, or be a superior
+	 * slayer monster you spawned while "Show for superior slayer monsters" is on.
 	 */
 	boolean shouldShowBarFor(Actor opponent)
 	{
 		return opponent != null
 			&& opponent.getName() != null
-			&& (!config.bossOnly() || opponent.getCombatLevel() >= config.minimumCombatLevel() || isGameBarBoss(opponent));
+			&& (!config.bossOnly()
+				|| opponent.getCombatLevel() >= config.minimumCombatLevel()
+				|| isGameBarBoss(opponent)
+				|| (config.showSuperiors() && superiors.contains(opponent)));
 	}
 
 	/**
