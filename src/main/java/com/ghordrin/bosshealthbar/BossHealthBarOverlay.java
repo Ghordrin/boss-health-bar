@@ -339,7 +339,10 @@ class BossHealthBarOverlay extends Overlay
 		final boolean showHeader = config.showBossName() || config.showDamageNumber();
 		final int headerHeight = showHeader ? Math.round(HEADER_HEIGHT * textScale) : 0;
 		final String hpText = defeated ? null : buildHitpointsText(state);
-		final int footerHeight = hpText != null || defeated ? Math.round(FOOTER_HEIGHT * textScale) : 0;
+		// Room for the "Defeated" label is reserved while the defeat animation is on, so the overlay
+		// doesn't grow and move the bar when the label appears.
+		final int footerHeight = hpText != null || defeated || config.showDefeatAnimation()
+			? Math.round(FOOTER_HEIGHT * textScale) : 0;
 		final ThemeColors colors = getThemeColors();
 
 		final OrnamentRenderer.Ornament ornament = ornamentRenderer.getOrnament(
