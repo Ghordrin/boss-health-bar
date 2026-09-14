@@ -299,7 +299,7 @@ public class BossHealthBarPlugin extends Plugin
 	 * Returns the NPC whose health the Theatre of Blood boss bar shows, or null when that bar isn't
 	 * up or shows room progress. The bar doesn't say which NPC it belongs to, so this picks the
 	 * nearby attackable NPC with the highest combat level, and the largest one on a tie. The result
-	 * is cached until an NPC spawns, changes or despawns.
+	 * is cached until an NPC that could replace it spawns or changes, or the boss despawns.
 	 */
 	private NPC findTobBoss()
 	{
@@ -507,7 +507,10 @@ public class BossHealthBarPlugin extends Plugin
 	{
 		// The boss may have just appeared or reappeared, so search for it again.
 		nativeBarSearchedId = -1;
-		tobBossSearchNeeded = true;
+		if (mayBeTobBoss(event.getNpc()))
+		{
+			tobBossSearchNeeded = true;
+		}
 		recentSpawnTicks.put(event.getNpc(), client.getTickCount());
 	}
 
@@ -575,7 +578,19 @@ public class BossHealthBarPlugin extends Plugin
 	public void onNpcChanged(NpcChanged event)
 	{
 		// Some bosses change form between phases, which can change their combat level.
-		tobBossSearchNeeded = true;
+		if (event.getNpc() == tobBoss || mayBeTobBoss(event.getNpc()))
+		{
+			tobBossSearchNeeded = true;
+		}
+	}
+
+	/**
+	 * Whether a spawned or changed NPC could be picked over the current Theatre of Blood boss, so
+	 * the many smaller NPCs that spawn in some rooms don't each cause a search.
+	 */
+	private boolean mayBeTobBoss(NPC npc)
+	{
+		return tobBoss == null || npc.getCombatLevel() >= tobBoss.getCombatLevel();
 	}
 
 	/**
@@ -592,9 +607,10 @@ public class BossHealthBarPlugin extends Plugin
 		}
 		if (event.getNpc() == tobBoss)
 		{
+			// Only losing the boss itself can change which NPC is picked.
 			tobBoss = null;
+			tobBossSearchNeeded = true;
 		}
-		tobBossSearchNeeded = true;
 		recentSpawnTicks.remove(event.getNpc());
 		superiors.remove(event.getNpc());
 
