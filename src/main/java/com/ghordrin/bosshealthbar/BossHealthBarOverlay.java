@@ -207,6 +207,17 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
+	 * Forgets the opponent, animation and colors, for when the plugin starts again.
+	 */
+	void reset()
+	{
+		trackedOpponent = null;
+		lastRenderNanos = 0;
+		resetAnimation();
+		invalidateColors();
+	}
+
+	/**
 	 * Clears the animation state, so the next frame starts at the opponent's current health and
 	 * fades in, instead of animating from the previous opponent's health.
 	 */

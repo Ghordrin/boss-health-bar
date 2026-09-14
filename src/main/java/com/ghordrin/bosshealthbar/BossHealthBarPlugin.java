@@ -38,6 +38,7 @@ import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Actor;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.Hitsplat;
 import net.runelite.api.HitsplatID;
 import net.runelite.api.NPC;
@@ -45,6 +46,7 @@ import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
 import net.runelite.api.events.BeforeRender;
 import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.InteractingChanged;
@@ -150,6 +152,8 @@ public class BossHealthBarPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		// The overlay keeps its state while the plugin is off, and misses any config changes made then.
+		overlay.reset();
 		overlayManager.add(overlay);
 		applyVanillaOverlayOverride();
 	}
@@ -159,11 +163,30 @@ public class BossHealthBarPlugin extends Plugin
 	{
 		overlayManager.remove(overlay);
 		restoreVanillaOverlay();
+		// The client thread reads and changes this state, so clear it there.
 		clientThread.invoke(() ->
 		{
 			restoreNativeBar();
 			restoreTobBar();
+			resetState();
 		});
+	}
+
+	/**
+	 * Clears everything known about the opponent and nearby NPCs when logging out or hopping worlds,
+	 * since those NPCs are gone.
+	 */
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		if (event.getGameState() == GameState.LOGIN_SCREEN || event.getGameState() == GameState.HOPPING)
+		{
+			resetState();
+		}
+	}
+
+	private void resetState()
+	{
 		lastOpponent = null;
 		nativeBarNpc = null;
 		nativeBarSearchedId = -1;
@@ -560,11 +583,13 @@ public class BossHealthBarPlugin extends Plugin
 
 		markSuperior();
 
+		final Player player = client.getLocalPlayer();
 		if (lastOpponent != null
+			&& player != null
 			&& lastOpponent != findNativeBarNpc()
 			&& lastOpponent != findTobBoss()
 			&& lastInteractionLostTime != null
-			&& client.getLocalPlayer().getInteracting() == null
+			&& player.getInteracting() == null
 			&& Duration.between(lastInteractionLostTime, Instant.now()).compareTo(Duration.ofSeconds(config.hideDelay())) > 0)
 		{
 			log.debug("Opponent {} timed out after {}s with no interaction, clearing", lastOpponent, config.hideDelay());
