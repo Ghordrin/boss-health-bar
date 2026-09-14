@@ -39,6 +39,7 @@ import net.runelite.api.Actor;
 import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
 import net.runelite.api.Hitsplat;
+import net.runelite.api.HitsplatID;
 import net.runelite.api.NPC;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
@@ -393,11 +394,17 @@ public class BossHealthBarPlugin extends Plugin
 		}
 
 		final Hitsplat hitsplat = event.getHitsplat();
+		if (hitsplat.getAmount() <= 0 || hitsplat.getHitsplatType() == HitsplatID.HEAL)
+		{
+			// Misses and heals don't remove health, so they shouldn't flash the bar or hold the trail.
+			return;
+		}
+
 		final Instant now = Instant.now();
 		lastHitTime = now;
 		lastHitAmount = hitsplat.getAmount();
 
-		if (hitsplat.isMine() && hitsplat.getAmount() > 0)
+		if (hitsplat.isMine())
 		{
 			if (lastDamageDealtTime == null || Duration.between(lastDamageDealtTime, now).compareTo(DAMAGE_COMBO_WINDOW) > 0)
 			{

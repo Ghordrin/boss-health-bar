@@ -376,7 +376,7 @@ class BossHealthBarOverlay extends Overlay
 		}
 
 		graphics.translate(shownInset, 0);
-		drawBar(graphics, state.scale, barY, shownWidth, barHeight, colors,
+		drawBar(graphics, state.maxHealth, barY, shownWidth, barHeight, colors,
 			defeated ? NO_PHASE_MARKERS : state.phaseMarkers, lowHealthPulse(defeated), fillProgress);
 		graphics.translate(-shownInset, 0);
 
@@ -835,7 +835,8 @@ class BossHealthBarOverlay extends Overlay
 	 * Draws the bar itself: the track, damage trail, heal preview, fill, frame, phase markers, end
 	 * pieces and the big hit flash.
 	 *
-	 * @param scale the opponent's health scale, used to decide whether the last hit was big
+	 * @param maxHealth the opponent's max hitpoints, used to decide whether the last hit was big, or
+	 *                  null when unknown, in which case the bar doesn't flash
 	 * @param y the top of the bar
 	 * @param width the full width including the end pieces
 	 * @param height the bar height
@@ -843,7 +844,7 @@ class BossHealthBarOverlay extends Overlay
 	 * @param lowHealthPulse the strength of the low health effect this frame, from 0 (off) to 1
 	 * @param fillProgress how far the intro's fill sweep has got, from 0 (empty) to 1 (the real health)
 	 */
-	private void drawBar(Graphics2D graphics, int scale, int y, int width, int height, ThemeColors colors,
+	private void drawBar(Graphics2D graphics, Integer maxHealth, int y, int width, int height, ThemeColors colors,
 		float[] phaseMarkers, float lowHealthPulse, float fillProgress)
 	{
 		final Color frameColor = colors.getFrame();
@@ -939,10 +940,10 @@ class BossHealthBarOverlay extends Overlay
 		drawFinials(graphics, barX, y, barWidth, height, frameColor);
 		drawUnderline(graphics, barX, y + height + 1, barWidth, frameColor);
 
-		if (config.flashOnBigHits())
+		if (config.flashOnBigHits() && maxHealth != null)
 		{
 			Instant lastHit = plugin.getLastHitTime();
-			if (lastHit != null && plugin.getLastHitAmount() >= scale * BIG_HIT_FRACTION)
+			if (lastHit != null && plugin.getLastHitAmount() >= maxHealth * BIG_HIT_FRACTION)
 			{
 				Duration since = Duration.between(lastHit, Instant.now());
 				if (since.compareTo(FLASH_DURATION) < 0)
