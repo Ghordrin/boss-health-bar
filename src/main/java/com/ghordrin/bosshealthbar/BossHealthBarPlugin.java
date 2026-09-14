@@ -89,6 +89,10 @@ public class BossHealthBarPlugin extends Plugin
 	private static final int SUPERIOR_SEARCH_DISTANCE = 15;
 	private static final String VANILLA_OVERLAY_GROUP = "opponentinfo";
 	private static final String VANILLA_OVERLAY_KEY = "showOpponentHealthOverlay";
+	// Kept in this plugin's config group rather than in memory, so the original value can still be
+	// restored after the client closes while the plugin is on.
+	private static final String SAVED_VANILLA_OVERLAY_KEY = "savedOpponentHealthOverlay";
+	private static final String VANILLA_OVERLAY_HIDDEN_KEY = "opponentHealthOverlayHidden";
 
 	@Inject
 	private Client client;
@@ -124,8 +128,6 @@ public class BossHealthBarPlugin extends Plugin
 	private Instant lastDamageDealtTime;
 
 	private Instant lastInteractionLostTime;
-	private String savedVanillaOverlayValue;
-	private boolean vanillaOverlayOverridden;
 	private boolean nativeBarHidden;
 	private NPC nativeBarNpc;
 	private int nativeBarSearchedId = -1;
@@ -178,14 +180,29 @@ public class BossHealthBarPlugin extends Plugin
 
 	/**
 	 * Makes the overlay read its colors again when any setting of this plugin changes, so a new
-	 * theme or custom color shows on the next frame.
+	 * theme or custom color shows on the next frame, and hides or restores the "Opponent
+	 * Information" health overlay when that setting is toggled.
 	 */
 	@Subscribe
 	public void onConfigChanged(ConfigChanged event)
 	{
-		if (BossHealthBarConfig.GROUP.equals(event.getGroup()))
+		if (!BossHealthBarConfig.GROUP.equals(event.getGroup()))
 		{
-			overlay.invalidateColors();
+			return;
+		}
+
+		overlay.invalidateColors();
+
+		if (BossHealthBarConfig.HIDE_VANILLA_OVERLAY_KEY.equals(event.getKey()))
+		{
+			if (config.hideVanillaOverlay())
+			{
+				applyVanillaOverlayOverride();
+			}
+			else
+			{
+				restoreVanillaOverlay();
+			}
 		}
 	}
 
@@ -725,18 +742,31 @@ public class BossHealthBarPlugin extends Plugin
 	/**
 	 * Turns off the health overlay of RuneLite's "Opponent Information" plugin when the "Hide
 	 * vanilla opponent overlay" setting is on, saving its previous value for
-	 * {@link #restoreVanillaOverlay()}.
+	 * {@link #restoreVanillaOverlay()}. If the value was already saved, such as when the client
+	 * closed while this plugin was on, the saved value is kept instead of being overwritten.
 	 */
 	private void applyVanillaOverlayOverride()
 	{
-		if (!config.hideVanillaOverlay() || vanillaOverlayOverridden)
+		if (!config.hideVanillaOverlay())
 		{
 			return;
 		}
 
-		savedVanillaOverlayValue = configManager.getConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY);
-		configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, "false");
-		vanillaOverlayOverridden = true;
+		if (!isVanillaOverlayHidden())
+		{
+			final String current = configManager.getConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY);
+			if (current == null)
+			{
+				configManager.unsetConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY);
+			}
+			else
+			{
+				configManager.setConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY, current);
+			}
+			configManager.setConfiguration(BossHealthBarConfig.GROUP, VANILLA_OVERLAY_HIDDEN_KEY, true);
+		}
+
+		configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, false);
 	}
 
 	/**
@@ -744,21 +774,31 @@ public class BossHealthBarPlugin extends Plugin
 	 */
 	private void restoreVanillaOverlay()
 	{
-		if (!vanillaOverlayOverridden)
+		if (!isVanillaOverlayHidden())
 		{
 			return;
 		}
 
-		if (savedVanillaOverlayValue == null)
+		final String saved = configManager.getConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY);
+		if (saved == null)
 		{
 			configManager.unsetConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY);
 		}
 		else
 		{
-			configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, savedVanillaOverlayValue);
+			configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, saved);
 		}
 
-		vanillaOverlayOverridden = false;
-		savedVanillaOverlayValue = null;
+		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY);
+		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, VANILLA_OVERLAY_HIDDEN_KEY);
+	}
+
+	/**
+	 * Whether this plugin has turned off the "Opponent Information" health overlay and not yet put
+	 * it back.
+	 */
+	private boolean isVanillaOverlayHidden()
+	{
+		return Boolean.parseBoolean(configManager.getConfiguration(BossHealthBarConfig.GROUP, VANILLA_OVERLAY_HIDDEN_KEY));
 	}
 }

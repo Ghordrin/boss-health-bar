@@ -36,6 +36,7 @@ import net.runelite.client.config.Units;
 public interface BossHealthBarConfig extends Config
 {
 	String GROUP = "bosshealthbar";
+	String HIDE_VANILLA_OVERLAY_KEY = "hideVanillaOverlay";
 
 	@ConfigSection(
 		name = "Appearance",
@@ -490,9 +491,9 @@ public interface BossHealthBarConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "hideVanillaOverlay",
+		keyName = HIDE_VANILLA_OVERLAY_KEY,
 		name = "Hide vanilla opponent overlay",
-		description = "Turn off the health bar of RuneLite's \"Opponent Information\" plugin while this plugin is on, so two health bars aren't shown at once. Takes effect when this plugin starts.",
+		description = "Turn off the health bar of RuneLite's \"Opponent Information\" plugin while this plugin is on, so two health bars aren't shown at once.",
 		position = 5,
 		section = behaviourSection
 	)
