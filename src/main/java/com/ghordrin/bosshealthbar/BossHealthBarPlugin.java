@@ -310,6 +310,9 @@ public class BossHealthBarPlugin extends Plugin
 		lastHitMillis = 0;
 		lastInteractionLostMillis = 0;
 		resetComboDamage();
+		// The overlay keeps drawing the opponent through the defeat animation, so it has to forget it
+		// too, or the bar can carry over to the next world.
+		overlay.reset();
 	}
 
 	/**
@@ -531,6 +534,8 @@ public class BossHealthBarPlugin extends Plugin
 		if (trackedId == -1)
 		{
 			nativeBarNpc = null;
+			// The same ID may be tracked again later, so don't let the search below be skipped for it.
+			nativeBarSearchedId = -1;
 			return null;
 		}
 

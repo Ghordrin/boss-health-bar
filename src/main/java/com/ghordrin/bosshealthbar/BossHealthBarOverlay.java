@@ -222,6 +222,9 @@ class BossHealthBarOverlay extends Overlay
 	private boolean cachedFontItalic;
 	private Font textFont;
 	private Font smallFont;
+	// The size textFont is actually drawn at, which the spacing around the text is scaled by. Pixel
+	// fonts keep their own size, so it isn't always the size asked for in the config.
+	private int layoutFontSize = REFERENCE_FONT_SIZE;
 	// Whether those fonts are RuneScape pixel fonts, which are drawn without antialiasing.
 	private boolean pixelFont;
 
@@ -398,7 +401,7 @@ class BossHealthBarOverlay extends Overlay
 
 		final int barHeight = config.barHeight();
 		updateFonts();
-		final float textScale = cachedFontSize / (float) REFERENCE_FONT_SIZE;
+		final float textScale = layoutFontSize / (float) REFERENCE_FONT_SIZE;
 		final boolean showHeader = config.showBossName() || config.showDamageNumber();
 		final int headerHeight = showHeader ? Math.round(HEADER_HEIGHT * textScale) : 0;
 		final String hpText = defeated ? null : buildHitpointsText(state);
@@ -575,7 +578,11 @@ class BossHealthBarOverlay extends Overlay
 	 */
 	private void updateOpponentInfo(Actor opponent)
 	{
-		final int npcId = opponent instanceof NPC ? ((NPC) opponent).getId() : -1;
+		// The ID of the NPC's current form, which changes when it takes on another form without its
+		// base ID changing, so that a new name and max health are read for the new form.
+		final NPCComposition composition = opponent instanceof NPC
+			? ((NPC) opponent).getTransformedComposition() : null;
+		final int npcId = composition != null ? composition.getId() : -1;
 		if (opponent == infoActor && npcId == infoNpcId)
 		{
 			return;
@@ -586,7 +593,6 @@ class BossHealthBarOverlay extends Overlay
 		boolean complete = true;
 		if (opponent instanceof NPC)
 		{
-			final NPCComposition composition = ((NPC) opponent).getTransformedComposition();
 			if (composition != null)
 			{
 				final String longName = composition.getStringValue(ParamID.NPC_HP_NAME);
@@ -594,13 +600,13 @@ class BossHealthBarOverlay extends Overlay
 				{
 					name = longName;
 				}
+				maxHealth = npcManager.getHealth(npcId);
 			}
 			else
 			{
 				// The form isn't known yet, so read it again next frame.
 				complete = false;
 			}
-			maxHealth = npcManager.getHealth(npcId);
 		}
 
 		infoName = name;
@@ -806,6 +812,7 @@ class BossHealthBarOverlay extends Overlay
 				Math.max(MIN_FONT_SIZE, Math.round(size * SMALL_TEXT_SCALE)));
 		}
 
+		layoutFontSize = textFont.getSize();
 		cachedFontFamily = family;
 		cachedFontSize = size;
 		cachedFontBold = fontType.isBold();
