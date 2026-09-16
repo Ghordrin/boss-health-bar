@@ -542,7 +542,7 @@ class BossHealthBarOverlay extends Overlay
 			return null;
 		}
 
-		final boolean nativeBar = plugin.isNativeBarTracking(opponent);
+		final boolean nativeBar = plugin.isNativeBarNpc(opponent);
 		final boolean tobBar = plugin.isTobBarTracking(opponent);
 		if ((nativeBar || tobBar) && !config.replaceNativeBossBar())
 		{
@@ -730,27 +730,22 @@ class BossHealthBarOverlay extends Overlay
 			}
 		}
 
-		if (!config.showDamageTrail() || displayedFraction > trailFraction)
+		if (!config.showDamageTrail() || displayedFraction >= trailFraction)
 		{
 			trailFraction = displayedFraction;
 			return;
 		}
 
-		if (trailFraction > displayedFraction)
+		final long lastHit = plugin.getLastHitMillis();
+		if (lastHit != 0 && System.currentTimeMillis() - lastHit < TRAIL_HOLD.toMillis())
 		{
-			final long lastHit = plugin.getLastHitMillis();
-			boolean holding = lastHit != 0 && System.currentTimeMillis() - lastHit < TRAIL_HOLD.toMillis();
-			if (!holding)
-			{
-				// Drain faster the larger the gap, with a minimum speed so the end doesn't crawl.
-				float gap = trailFraction - displayedFraction;
-				trailFraction -= Math.max(TRAIL_MIN_DRAIN_PER_SECOND, gap * TRAIL_CATCH_UP_RATE) * dt;
-				if (trailFraction < displayedFraction)
-				{
-					trailFraction = displayedFraction;
-				}
-			}
+			return;
 		}
+
+		// Drain faster the larger the gap, with a minimum speed so the end doesn't crawl.
+		final float gap = trailFraction - displayedFraction;
+		trailFraction = Math.max(displayedFraction,
+			trailFraction - Math.max(TRAIL_MIN_DRAIN_PER_SECOND, gap * TRAIL_CATCH_UP_RATE) * dt);
 	}
 
 	/**

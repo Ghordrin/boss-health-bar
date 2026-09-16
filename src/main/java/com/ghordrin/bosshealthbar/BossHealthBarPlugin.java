@@ -67,6 +67,7 @@ import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
+
 @Slf4j
 @PluginDescriptor(
 	name = "Modern Boss Healthbar",
@@ -275,6 +276,7 @@ public class BossHealthBarPlugin extends Plugin
 				if (theme.name().equals(previousValue))
 				{
 					previous = theme;
+					break;
 				}
 			}
 		}
@@ -528,10 +530,10 @@ public class BossHealthBarPlugin extends Plugin
 	}
 
 	/**
-	 * Whether the actor is an NPC with the ID the game's boss bar tracks. Several loaded NPCs can
-	 * share that ID.
+	 * Whether the actor is an NPC with the ID the game's boss bar tracks, which means that bar is
+	 * enabled in the game settings and showing it. Several loaded NPCs can share that ID.
 	 */
-	private boolean isNativeBarNpc(Actor actor)
+	boolean isNativeBarNpc(Actor actor)
 	{
 		if (!(actor instanceof NPC))
 		{
@@ -830,7 +832,7 @@ public class BossHealthBarPlugin extends Plugin
 		boolean replace = false;
 		if (config.replaceNativeBossBar())
 		{
-			if (shouldShowBarFor(lastOpponent) && isNativeBarTracking(lastOpponent))
+			if (shouldShowBarFor(lastOpponent) && isNativeBarNpc(lastOpponent))
 			{
 				replace = true;
 				replacedNativeBarNpcId = nativeBarNpcId();
@@ -944,14 +946,6 @@ public class BossHealthBarPlugin extends Plugin
 				|| opponent.getCombatLevel() >= config.minimumCombatLevel()
 				|| isGameBarBoss(opponent)
 				|| (config.showSuperiors() && superiors.contains(opponent)));
-	}
-
-	/**
-	 * Whether the game's boss bar is enabled in the game settings and tracking this opponent.
-	 */
-	boolean isNativeBarTracking(Actor opponent)
-	{
-		return isNativeBarNpc(opponent);
 	}
 
 	/**
