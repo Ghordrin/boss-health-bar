@@ -25,10 +25,12 @@
 package com.ghordrin.bosshealthbar;
 
 import java.awt.Color;
+import java.awt.Font;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
+import net.runelite.client.config.FontType;
 import net.runelite.client.config.Range;
 import net.runelite.client.config.Units;
 
@@ -37,6 +39,10 @@ public interface BossHealthBarConfig extends Config
 {
 	String GROUP = "bosshealthbar";
 	String HIDE_VANILLA_OVERLAY_KEY = "hideVanillaOverlay";
+	String THEME_KEY = "theme";
+	HealthBarTheme DEFAULT_THEME = HealthBarTheme.ZAMORAK;
+	String FONT_KEY = "font";
+	FontType DEFAULT_FONT = new FontType().withFamily(Font.SERIF).withSize(17);
 
 	@ConfigSection(
 		name = "Appearance",
@@ -47,8 +53,8 @@ public interface BossHealthBarConfig extends Config
 
 	/**
 	 * The colors used by {@link HealthBarTheme#CUSTOM}; other themes ignore them. Each item maps to
-	 * one field of {@link ThemeColors}, and the defaults match {@link HealthBarTheme#ASHEN_CRIMSON},
-	 * so choosing Custom looks the same until a color is changed.
+	 * one field of {@link ThemeColors}. Switching to Custom fills them in with the colors of the
+	 * theme that was selected before.
 	 */
 	@ConfigSection(
 		name = "Custom colors",
@@ -73,21 +79,32 @@ public interface BossHealthBarConfig extends Config
 	String behaviourSection = "behaviour";
 
 	@ConfigItem(
-		keyName = "theme",
+		keyName = "showPreview",
+		name = "Preview",
+		description = "Show the bar with a sample opponent while you aren't fighting anything, so you can see how your settings look. The sample loses and regains health on a loop.",
+		position = 0
+	)
+	default boolean showPreview()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = THEME_KEY,
 		name = "Theme",
-		description = "The colors of the health bar. Choose Custom to pick your own colors in the Custom colors section.",
+		description = "The colors of the health bar. Choose Custom to tweak the colors in the Custom colors section, starting from the theme you had selected.",
 		position = 0,
 		section = appearanceSection
 	)
 	default HealthBarTheme theme()
 	{
-		return HealthBarTheme.ASHEN_CRIMSON;
+		return DEFAULT_THEME;
 	}
 
 	@ConfigItem(
 		keyName = "ornamentStyle",
 		name = "Ornaments",
-		description = "Decorations on both ends of the bar, colored to match the theme. Godsword draws a hilt on the left and a blade tip on the right.",
+		description = "Decorations on both ends of the bar, colored to match the theme. Godsword, Staff and Skull and bone draw a different piece on each end, while Scroll and Brackets draw the same piece mirrored.",
 		position = 1,
 		section = appearanceSection
 	)
@@ -96,12 +113,25 @@ public interface BossHealthBarConfig extends Config
 		return OrnamentStyle.GODSWORD;
 	}
 
+	@Range(min = 50, max = 200)
+	@ConfigItem(
+		keyName = "ornamentSize",
+		name = "Ornament size",
+		description = "How large the ornaments are drawn, as a percentage of the size that suits the bar height.",
+		position = 2,
+		section = appearanceSection
+	)
+	default int ornamentSize()
+	{
+		return 100;
+	}
+
 	@Range(min = 200, max = 1400)
 	@ConfigItem(
 		keyName = "barWidth",
 		name = "Bar width",
 		description = "The width of the health bar in pixels.",
-		position = 2,
+		position = 3,
 		section = appearanceSection
 	)
 	default int barWidth()
@@ -113,7 +143,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "fitToGameView",
 		name = "Fit to game view",
 		description = "Make the bar narrower when it would take up too much of the game view, such as in fixed mode or a small window. The bar height and text keep their size so they stay readable.",
-		position = 3,
+		position = 4,
 		section = appearanceSection
 	)
 	default boolean fitToGameView()
@@ -126,7 +156,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "barHeight",
 		name = "Bar height",
 		description = "The height of the health bar itself in pixels, not counting the text around it.",
-		position = 4,
+		position = 5,
 		section = appearanceSection
 	)
 	default int barHeight()
@@ -138,7 +168,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "showDamageTrail",
 		name = "Show damage trail",
 		description = "After a hit, keep the lost health visible as a lighter section for a moment before it drains away.",
-		position = 5,
+		position = 6,
 		section = appearanceSection
 	)
 	default boolean showDamageTrail()
@@ -150,7 +180,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "showPhaseMarkers",
 		name = "Show phase markers",
 		description = "When this bar replaces the game's own boss health bar, show the same phase markers the game's bar shows.",
-		position = 6,
+		position = 7,
 		section = appearanceSection
 	)
 	default boolean showPhaseMarkers()
@@ -162,7 +192,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "flashOnBigHits",
 		name = "Flash on big hits",
 		description = "Briefly flash the bar's border when a hit removes a large part of the opponent's health.",
-		position = 7,
+		position = 8,
 		section = appearanceSection
 	)
 	default boolean flashOnBigHits()
@@ -174,7 +204,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "introAnimation",
 		name = "Intro animation",
 		description = "How the bar appears for a new opponent: fade in, rise into place, widen from the center with the fill sweeping up, or rise and widen.",
-		position = 8,
+		position = 9,
 		section = appearanceSection
 	)
 	default IntroAnimation introAnimation()
@@ -186,7 +216,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "showDefeatAnimation",
 		name = "Defeat animation",
 		description = "When the opponent dies, hold the empty bar with a \"Defeated\" label for a moment before fading it out.",
-		position = 9,
+		position = 10,
 		section = appearanceSection
 	)
 	default boolean showDefeatAnimation()
@@ -198,7 +228,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "lowHealthEffect",
 		name = "Low health effect",
 		description = "Make the fill pulse and glow while the opponent's health is at or below the low health threshold.",
-		position = 10,
+		position = 11,
 		section = appearanceSection
 	)
 	default boolean lowHealthEffect()
@@ -212,7 +242,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "lowHealthThreshold",
 		name = "Low health threshold",
 		description = "The health percentage at or below which the low health effect starts.",
-		position = 11,
+		position = 12,
 		section = appearanceSection
 	)
 	default int lowHealthThreshold()
@@ -225,7 +255,7 @@ public interface BossHealthBarConfig extends Config
 		keyName = "animationSpeed",
 		name = "Heal animation speed",
 		description = "How quickly the bar refills when the opponent heals. Higher is faster. Damage always lowers the bar immediately.",
-		position = 12,
+		position = 13,
 		section = appearanceSection
 	)
 	default int animationSpeed()
@@ -284,7 +314,7 @@ public interface BossHealthBarConfig extends Config
 	@ConfigItem(
 		keyName = "customOrnamentColor",
 		name = "Ornament",
-		description = "The metal color of the ornaments. The blade tip mixes it with steel.",
+		description = "The metal color of the ornaments. Pieces made of another material, such as the blade tip or a bone, mix it with that material's color.",
 		position = 4,
 		section = customColorsSection
 	)
@@ -354,29 +384,15 @@ public interface BossHealthBarConfig extends Config
 	}
 
 	@ConfigItem(
-		keyName = "fontStyle",
+		keyName = FONT_KEY,
 		name = "Font",
-		description = "The font used for all text around the bar. RuneScape uses the game's interface font.",
+		description = "The font, size and style of the name and damage number. The combat level and hitpoints text use a smaller version of it. Lists the RuneScape fonts, the fonts installed on your computer, and any .ttf or .otf files added to the .runelite/fonts folder.",
 		position = 0,
 		section = textSection
 	)
-	default FontStyle fontStyle()
+	default FontType font()
 	{
-		return FontStyle.SERIF;
-	}
-
-	@Range(min = 75, max = 150)
-	@Units(Units.PERCENT)
-	@ConfigItem(
-		keyName = "textSize",
-		name = "Text size",
-		description = "The size of all text around the bar, relative to its default size.",
-		position = 1,
-		section = textSection
-	)
-	default int textSize()
-	{
-		return 100;
+		return DEFAULT_FONT;
 	}
 
 	@ConfigItem(

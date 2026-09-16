@@ -6,8 +6,10 @@ A RuneLite plugin that replaces the opponent health bar with a themed bar.
 
 - **Layout** — a long, thin bar in a frame with end pieces. The opponent's name
   is shown above the left end, and the bar fades in when a fight starts.
-- **Godsword ornament** — a hilt on the left end and a blade tip on the right,
-  colored to match the theme. Can be turned off.
+- **Ornaments** — decorations on both ends of the bar, colored to match the
+  theme and resizable. A godsword hilt and blade tip, a staff with a glowing
+  orb, a skull and bone, a rolled scroll, or bevelled brackets. Can be turned
+  off.
 - **Damage number** — the total damage of your recent hits, shown above the
   right end of the bar. It resets a few seconds after your last hit.
 - **Damage trail** — damage lowers the fill immediately, and the lost health
@@ -20,11 +22,12 @@ A RuneLite plugin that replaces the opponent health bar with a themed bar.
   slide in, just expand, or only fade in.
 - **Low health effect** — the fill pulses and glows once the opponent's health
   is at or below a set threshold (25% by default).
-- **Fonts** — serif, sans-serif or the RuneScape font, with adjustable text
-  size.
-- **Themes** — Ashen Crimson (default), Emberfall, Gilded Blood, Frostbound,
-  Abyssal, Obsidian, Verdant, Venom, Sunforged and Duskrose. Each theme has
-  its own fill, trail and frame colors, and in most themes the fill color
+- **Fonts** — RuneLite's font picker: the RuneScape fonts, any font installed on
+  your computer, or a .ttf/.otf file added to the `.runelite/fonts` folder,
+  with adjustable size, bold and italic.
+- **Themes** — one for each god, in their colors: Zamorak (default), Saradomin,
+  Guthix, Armadyl, Bandos, Zaros, Seren, Tumeken, Elidinis, Ralos and Ranul.
+  Each theme has its own fill, trail and frame colors, and the fill color
   changes as the opponent's health drops.
 - **Custom colors** — choose the Custom theme to pick every color with a color
   picker: the fill at full and low health, damage trail, frame, ornament metal
@@ -76,11 +79,13 @@ then hidden for those bosses, so two bars aren't shown at once.
 Right-click the bar, or find "Modern Boss Healthbar" in the RuneLite plugin
 panel, to configure:
 
-- **Appearance** — theme, ornaments, bar width and height, fit to game view, damage trail, phase
+- **Preview** — show the bar with a sample opponent while you aren't fighting,
+  to try out settings
+- **Appearance** — theme, ornaments and their size, bar width and height, fit to game view, damage trail, phase
   markers, flash on big hits, intro animation, defeat animation, low health effect and
   threshold, heal animation speed
 - **Custom colors** — the colors used by the Custom theme
-- **Text** — font, text size, whether to show the name, combat level and damage
+- **Text** — font, whether to show the name, combat level and damage
   number, hitpoints text (none / percentage / hitpoints / both)
 - **Behaviour** — only show for bosses and the minimum combat level for that,
   whether to also show it for superior slayer monsters, how long the bar stays after you stop attacking, whether to replace the

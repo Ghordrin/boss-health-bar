@@ -53,6 +53,7 @@ import net.runelite.api.ParamID;
 import static net.runelite.api.MenuAction.RUNELITE_OVERLAY_CONFIG;
 import net.runelite.api.gameval.VarPlayerID;
 import net.runelite.api.gameval.VarbitID;
+import net.runelite.client.config.FontType;
 import net.runelite.client.game.NPCManager;
 import net.runelite.client.ui.FontManager;
 import static net.runelite.client.ui.overlay.OverlayManager.OPTION_CONFIGURE;
@@ -90,10 +91,25 @@ class BossHealthBarOverlay extends Overlay
 	private static final String DEFEATED_TEXT = "Defeated";
 	private static final Duration LOW_HEALTH_PULSE_PERIOD = Duration.ofMillis(1100);
 	private static final float[] NO_PHASE_MARKERS = new float[0];
+	// The sample opponent shown by the "Preview" setting. Its health steps through PREVIEW_HEALTH,
+	// one value per PREVIEW_STEP, taking hits down into low health and then healing back to full.
+	private static final String PREVIEW_NAME = "Preview";
+	private static final int PREVIEW_COMBAT_LEVEL = 450;
+	private static final int PREVIEW_MAX_HEALTH = 500;
+	private static final int[] PREVIEW_HEALTH = {500, 500, 440, 385, 310, 250, 190, 120, 70, 70, 70, 500, 500};
+	private static final Duration PREVIEW_STEP = Duration.ofMillis(1200);
+	private static final float[] PREVIEW_PHASE_MARKERS = {0.5f};
 	// With "Fit to game view" on, the most of the game view's width the bar and its ornaments take
 	// up, and the narrowest the bar gets, so the name still has room.
 	private static final float MAX_VIEWPORT_FRACTION = 0.85f;
 	private static final int MIN_FITTED_BAR_WIDTH = 160;
+	// The spacing around the text is sized for REFERENCE_FONT_SIZE and scales with the font size,
+	// which is kept between MIN_FONT_SIZE and MAX_FONT_SIZE so the layout holds together. The combat
+	// level and hitpoints text are SMALL_TEXT_SCALE times the font size.
+	private static final int REFERENCE_FONT_SIZE = 16;
+	private static final int MIN_FONT_SIZE = 8;
+	private static final int MAX_FONT_SIZE = 40;
+	private static final float SMALL_TEXT_SCALE = 0.72f;
 
 	// NPCs with this param set to 1 have the game's boss bar show a percentage instead of exact
 	// hitpoints. There is no gameval constant for it.
@@ -188,6 +204,9 @@ class BossHealthBarOverlay extends Overlay
 	private long defeatStartNanos;
 	private int percentOnlyNpcId = -1;
 	private boolean percentOnly;
+	// Whether the last frame drew the preview, and when the current preview started.
+	private boolean showingPreview;
+	private long previewStartNanos;
 
 	// The name and max hitpoints read for infoActor while it had the NPC ID infoNpcId (-1 for players).
 	private Actor infoActor;
@@ -219,12 +238,16 @@ class BossHealthBarOverlay extends Overlay
 	private int barImageHeight;
 	private Color barImageFrameColor;
 
-	private FontStyle cachedFontStyle;
-	private int cachedTextSize;
-	private Font nameFont;
-	private Font levelFont;
-	private Font damageFont;
-	private Font hpFont;
+	// The font setting the fonts were built for. textFont is for the name and damage number, and
+	// smallFont for the combat level and hitpoints text.
+	private String cachedFontFamily;
+	private int cachedFontSize;
+	private boolean cachedFontBold;
+	private boolean cachedFontItalic;
+	private Font textFont;
+	private Font smallFont;
+	// Whether those fonts are RuneScape pixel fonts, which are drawn without antialiasing.
+	private boolean pixelFont;
 
 	@Inject
 	private BossHealthBarOverlay(
@@ -253,6 +276,7 @@ class BossHealthBarOverlay extends Overlay
 		trackedOpponent = null;
 		infoActor = null;
 		lastRenderNanos = 0;
+		showingPreview = false;
 		resetAnimation();
 		invalidateColors();
 	}
@@ -328,6 +352,9 @@ class BossHealthBarOverlay extends Overlay
 			}
 		}
 
+		final boolean wasShowingPreview = showingPreview;
+		showingPreview = false;
+
 		final BarState state;
 		if (opponent != null)
 		{
@@ -352,6 +379,17 @@ class BossHealthBarOverlay extends Overlay
 		{
 			state = lastState;
 		}
+		else if (config.showPreview())
+		{
+			if (!wasShowingPreview)
+			{
+				// Start from full health with the intro, like a new opponent.
+				resetAnimation();
+				previewStartNanos = now;
+			}
+			showingPreview = true;
+			state = previewState(now);
+		}
 		else
 		{
 			return null;
@@ -366,6 +404,12 @@ class BossHealthBarOverlay extends Overlay
 			final long fade = DEFEAT_FADE.toNanos();
 			if (elapsed >= hold + fade)
 			{
+				if (opponent == null)
+				{
+					// The ending has played out, so forget the opponent and let the preview show again.
+					trackedOpponent = null;
+					resetAnimation();
+				}
 				return null;
 			}
 			if (elapsed > hold)
@@ -378,7 +422,7 @@ class BossHealthBarOverlay extends Overlay
 
 		final int barHeight = config.barHeight();
 		updateFonts();
-		final float textScale = config.textSize() / 100f;
+		final float textScale = cachedFontSize / (float) REFERENCE_FONT_SIZE;
 		final boolean showHeader = config.showBossName() || config.showDamageNumber();
 		final int headerHeight = showHeader ? Math.round(HEADER_HEIGHT * textScale) : 0;
 		final String hpText = defeated ? null : buildHitpointsText(state);
@@ -389,7 +433,8 @@ class BossHealthBarOverlay extends Overlay
 		final ThemeColors colors = getThemeColors();
 
 		final OrnamentRenderer.Ornament ornament = ornamentRenderer.getOrnament(
-			config.ornamentStyle(), colors, ornamentScale(barHeight), barHeight / 2f + CAP_RISE + 0.5f);
+			config.ornamentStyle(), colors, ornamentScale(barHeight) * config.ornamentSize() / 100f,
+			barHeight / 2f + CAP_RISE + 0.5f);
 		// Each piece's anchor sits on the bar's center line, just overlapping the end piece's tip on its side.
 		final int leftExtent = ornament != null ? Math.max(0, ornament.left.anchorX - ORNAMENT_OVERLAP) : 0;
 		final int rightExtent = ornament != null
@@ -417,9 +462,15 @@ class BossHealthBarOverlay extends Overlay
 		final float opacity = progress(introElapsed, Duration.ZERO, FADE_IN_DURATION) * defeatOpacity;
 		setOpacity(graphics, originalComposite, opacity);
 
-		// Antialiased text with fractional metrics, so resized RuneScape fonts stay evenly spaced too.
-		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+		// Scalable fonts are antialiased and use fractional metrics, so resized text stays smooth and
+		// evenly spaced. Pixel fonts get neither: their strokes are a single pixel wide, so smoothing
+		// them leaves grey fringes, and fractional metrics put glyphs on part pixels where they blur.
+		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, pixelFont
+			? RenderingHints.VALUE_TEXT_ANTIALIAS_OFF
+			: RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, pixelFont
+			? RenderingHints.VALUE_FRACTIONALMETRICS_OFF
+			: RenderingHints.VALUE_FRACTIONALMETRICS_ON);
 		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
 
 		graphics.translate(leftExtent, topOffset + slideOffset);
@@ -440,7 +491,7 @@ class BossHealthBarOverlay extends Overlay
 		setOpacity(graphics, originalComposite, opacity * textOpacity);
 		if (defeated)
 		{
-			graphics.setFont(hpFont);
+			graphics.setFont(smallFont);
 			FontMetrics metrics = graphics.getFontMetrics();
 			int textX = (width - metrics.stringWidth(DEFEATED_TEXT)) / 2;
 			int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
@@ -448,7 +499,7 @@ class BossHealthBarOverlay extends Overlay
 		}
 		else if (hpText != null)
 		{
-			graphics.setFont(hpFont);
+			graphics.setFont(smallFont);
 			FontMetrics metrics = graphics.getFontMetrics();
 			int textX = width - CAP_WIDTH - TEXT_INSET - metrics.stringWidth(hpText);
 			int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
@@ -529,6 +580,17 @@ class BossHealthBarOverlay extends Overlay
 		}
 
 		return null;
+	}
+
+	/**
+	 * Returns the sample opponent drawn by the "Preview" setting, at the point of its health loop
+	 * reached by the given time.
+	 */
+	private BarState previewState(long now)
+	{
+		final int step = (int) ((now - previewStartNanos) / PREVIEW_STEP.toNanos() % PREVIEW_HEALTH.length);
+		return new BarState(PREVIEW_NAME, PREVIEW_COMBAT_LEVEL, PREVIEW_MAX_HEALTH, PREVIEW_HEALTH[step],
+			PREVIEW_MAX_HEALTH, true, false, config.showPhaseMarkers() ? PREVIEW_PHASE_MARKERS : NO_PHASE_MARKERS);
 	}
 
 	/**
@@ -710,7 +772,8 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
-	 * The ornament scale for a bar height: 1 up to a height of 8 pixels, then 4% larger per extra pixel.
+	 * The base ornament scale for a bar height, before the "Ornament size" setting: 1 up to a height
+	 * of 8 pixels, then 4% larger per extra pixel.
 	 */
 	private static float ornamentScale(int barHeight)
 	{
@@ -736,57 +799,62 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
-	 * Rebuilds the fonts when the font or text size setting has changed. The RuneScape fonts are
-	 * only resized when the text size isn't 100%, since they look best at their original size.
+	 * Rebuilds the fonts when the font setting has changed. The name and damage number use the chosen
+	 * font, and the combat level and hitpoints text a smaller version of it.
+	 *
+	 * <p>The RuneScape fonts are pixel fonts drawn from bitmaps made for one size, so deriving them
+	 * at any other size resamples them into a blur. They are kept at their own size, and the small
+	 * text uses RuneScape Small rather than a shrunken copy of the chosen font.
 	 */
 	private void updateFonts()
 	{
-		final FontStyle style = config.fontStyle();
-		final int textSize = config.textSize();
-		if (style == cachedFontStyle && textSize == cachedTextSize)
+		final FontType fontType = config.font();
+		final String family = fontType.getFamily() != null ? fontType.getFamily() : BossHealthBarConfig.DEFAULT_FONT.getFamily();
+		final int size = Math.max(MIN_FONT_SIZE, Math.min(MAX_FONT_SIZE, fontType.getSize()));
+		if (family.equals(cachedFontFamily) && size == cachedFontSize
+			&& fontType.isBold() == cachedFontBold && fontType.isItalic() == cachedFontItalic)
 		{
 			return;
 		}
 
-		final float scale = textSize / 100f;
-		switch (style)
+		final Font pixelBase = runescapeFont(family);
+		pixelFont = pixelBase != null;
+
+		final int italic = fontType.isItalic() ? Font.ITALIC : Font.PLAIN;
+		final int style = (fontType.isBold() ? Font.BOLD : Font.PLAIN) | italic;
+		textFont = FontManager.getFallbackFont(family, style, pixelFont ? pixelBase.getSize() : size);
+
+		if (pixelFont)
 		{
-			case RUNESCAPE:
-				nameFont = sized(FontManager.getRunescapeBoldFont(), scale);
-				levelFont = sized(FontManager.getRunescapeSmallFont(), scale);
-				damageFont = sized(FontManager.getRunescapeBoldFont(), scale);
-				hpFont = sized(FontManager.getRunescapeSmallFont(), scale);
-				break;
-			case SANS_SERIF:
-				nameFont = font(Font.SANS_SERIF, Font.BOLD, 15f * scale);
-				levelFont = font(Font.SANS_SERIF, Font.PLAIN, 11f * scale);
-				damageFont = font(Font.SANS_SERIF, Font.BOLD, 15f * scale);
-				hpFont = font(Font.SANS_SERIF, Font.PLAIN, 11f * scale);
-				break;
-			case SERIF:
-			default:
-				nameFont = font(Font.SERIF, Font.PLAIN, 17f * scale);
-				levelFont = font(Font.SERIF, Font.PLAIN, 12f * scale);
-				damageFont = font(Font.SERIF, Font.PLAIN, 16f * scale);
-				hpFont = font(Font.SERIF, Font.PLAIN, 12f * scale);
-				break;
+			final Font runescapeSmall = FontManager.getRunescapeSmallFont();
+			smallFont = FontManager.getFallbackFont(runescapeSmall.getFamily(), Font.PLAIN, runescapeSmall.getSize());
+		}
+		else
+		{
+			smallFont = FontManager.getFallbackFont(family, italic,
+				Math.max(MIN_FONT_SIZE, Math.round(size * SMALL_TEXT_SCALE)));
 		}
 
-		cachedFontStyle = style;
-		cachedTextSize = textSize;
-	}
-
-	private static Font font(String family, int style, float size)
-	{
-		return new Font(family, style, 1).deriveFont(size);
+		cachedFontFamily = family;
+		cachedFontSize = size;
+		cachedFontBold = fontType.isBold();
+		cachedFontItalic = fontType.isItalic();
 	}
 
 	/**
-	 * Scales a font, rounding to a whole point size. Returns the font unchanged at a scale of 1.
+	 * Returns the RuneScape font of the given family, or null when the family isn't one of them.
+	 * RuneScape and RuneScape Bold share the RuneScape family, while RuneScape Small has its own.
 	 */
-	private static Font sized(Font font, float scale)
+	private static Font runescapeFont(String family)
 	{
-		return scale == 1f ? font : font.deriveFont(Math.round(font.getSize2D() * scale) * 1f);
+		final Font regular = FontManager.getRunescapeFont();
+		if (family.equals(regular.getFamily()))
+		{
+			return regular;
+		}
+
+		final Font small = FontManager.getRunescapeSmallFont();
+		return family.equals(small.getFamily()) ? small : null;
 	}
 
 	/**
@@ -835,18 +903,18 @@ class BossHealthBarOverlay extends Overlay
 			if (config.showCombatLevel() && combatLevel > 0)
 			{
 				levelText = "LV " + combatLevel;
-				graphics.setFont(levelFont);
+				graphics.setFont(smallFont);
 				levelWidth = LEVEL_GAP + graphics.getFontMetrics().stringWidth(levelText);
 			}
 
 			int reserved = 0;
 			if (config.showDamageNumber())
 			{
-				graphics.setFont(damageFont);
+				graphics.setFont(textFont);
 				reserved = graphics.getFontMetrics().stringWidth(DAMAGE_NUMBER_SIZING) + LEVEL_GAP;
 			}
 
-			graphics.setFont(nameFont);
+			graphics.setFont(textFont);
 			FontMetrics nameMetrics = graphics.getFontMetrics();
 			String nameText = ellipsizeName(name, nameMetrics, right - left - reserved - levelWidth);
 			drawShadowedText(graphics, nameText, left, baseline, colors.getText(), 1f);
@@ -854,7 +922,7 @@ class BossHealthBarOverlay extends Overlay
 			if (levelText != null)
 			{
 				int levelX = left + nameMetrics.stringWidth(nameText) + LEVEL_GAP;
-				graphics.setFont(levelFont);
+				graphics.setFont(smallFont);
 				drawShadowedText(graphics, levelText, levelX, baseline, colors.getLevelText(), 0.9f);
 			}
 		}
@@ -928,7 +996,7 @@ class BossHealthBarOverlay extends Overlay
 		}
 
 		String text = String.valueOf(damage);
-		graphics.setFont(damageFont);
+		graphics.setFont(textFont);
 		FontMetrics metrics = graphics.getFontMetrics();
 		drawShadowedText(graphics, text, right - metrics.stringWidth(text), baseline, color, alpha);
 	}

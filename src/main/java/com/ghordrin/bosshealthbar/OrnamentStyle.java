@@ -27,7 +27,11 @@ package com.ghordrin.bosshealthbar;
 public enum OrnamentStyle
 {
 	NONE("None"),
-	GODSWORD("Godsword");
+	GODSWORD("Godsword"),
+	STAFF("Staff"),
+	BONE("Skull and bone"),
+	SCROLL("Scroll"),
+	BRACKET("Brackets");
 
 	private final String label;
 

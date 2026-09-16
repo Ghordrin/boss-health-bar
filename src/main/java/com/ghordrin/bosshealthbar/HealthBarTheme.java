@@ -29,16 +29,28 @@ import java.awt.Color;
 
 public enum HealthBarTheme
 {
-	ASHEN_CRIMSON("Ashen Crimson", 0x96161A, 0x96161A, 0x7A6C54, 0xD6B254),
-	EMBERFALL("Emberfall", 0xC41E1E, 0xE8841C, 0x8C2814, 0xFFE2A8),
-	GILDED_BLOOD("Gilded Blood", 0xA8182A, 0x6E0E1A, 0xC9A54A, 0xF2E6C8),
-	FROSTBOUND("Frostbound", 0x3C8CD2, 0x2A5C9C, 0xA8B8C8, 0xEAF6FF),
-	ABYSSAL("Abyssal", 0x7A2FC0, 0x4A1A80, 0x6E6A86, 0xE070D8),
-	OBSIDIAN("Obsidian", 0xE4DFD4, 0xB8B0A2, 0x4A4A4E, 0xC8303A),
-	VERDANT("Verdant", 0x2E9E5A, 0xB8B02A, 0x5A8A5E, 0xF4ECB0),
-	VENOM("Venom", 0x8CC81E, 0x4E8A14, 0x3E4A32, 0xE8F070),
-	SUNFORGED("Sunforged", 0xE0A42A, 0xC0681A, 0xB08A4E, 0xFFF4D6),
-	DUSKROSE("Duskrose", 0xC23C6E, 0x7E1E48, 0x8C6A78, 0xF6C8D8),
+	// Blue with gold and white.
+	SARADOMIN("Saradomin", 0x2F62C8, 0x1C3C84, 0xC9A54A, 0xF4F0E0),
+	// Red with black and flame orange.
+	ZAMORAK("Zamorak", 0xB01818, 0x6A0C0C, 0x5A4E4E, 0xF0A030),
+	// Green with brown and cream.
+	GUTHIX("Guthix", 0x3E9A3A, 0x28602A, 0x8A7450, 0xE8DDB0),
+	// White with silver and sky blue.
+	ARMADYL("Armadyl", 0xE2DED0, 0xA4A090, 0x6E8E9A, 0x7FD6E6),
+	// Olive and brown with bronze.
+	BANDOS("Bandos", 0x7A8A3A, 0x5A4A26, 0x7A6448, 0xD0A870),
+	// Purple with black.
+	ZAROS("Zaros", 0x6E2AB0, 0x3E1670, 0x5A5068, 0xC080F0),
+	// Pale crystal blue with silver.
+	SEREN("Seren", 0x7ED8E6, 0x3E9CB8, 0xB8D4DA, 0xF2FCFF),
+	// Gold with lapis blue.
+	TUMEKEN("Tumeken", 0xE0A82E, 0xB0701C, 0x3E5E9A, 0xFFF0C0),
+	// Teal water with gold.
+	ELIDINIS("Elidinis", 0x2E9EA8, 0x1E6078, 0xB89A5A, 0xC8F0F0),
+	// Sun orange with gold.
+	RALOS("Ralos", 0xF08A1C, 0xC04818, 0xC09040, 0xFFE890),
+	// Moon silver and blue.
+	RANUL("Ranul", 0x8898C8, 0x4A5488, 0x9AA0B0, 0xE8ECF8),
 	/**
 	 * Uses the colors from the "Custom colors" config section instead of fixed colors.
 	 */
