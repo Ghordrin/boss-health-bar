@@ -24,20 +24,31 @@
  */
 package com.ghordrin.bosshealthbar;
 
+import com.google.common.collect.ImmutableMap;
 import com.google.inject.Provides;
+import java.awt.Color;
+import java.awt.Font;
 import java.time.Duration;
-import java.time.Instant;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
 import javax.inject.Inject;
 import lombok.AccessLevel;
 import lombok.Getter;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Actor;
+import net.runelite.api.ChatMessageType;
 import net.runelite.api.Client;
+import net.runelite.api.GameState;
 import net.runelite.api.Hitsplat;
+import net.runelite.api.HitsplatID;
 import net.runelite.api.NPC;
 import net.runelite.api.NPCComposition;
 import net.runelite.api.Player;
 import net.runelite.api.events.BeforeRender;
+import net.runelite.api.events.ChatMessage;
+import net.runelite.api.events.GameStateChanged;
 import net.runelite.api.events.GameTick;
 import net.runelite.api.events.HitsplatApplied;
 import net.runelite.api.events.InteractingChanged;
@@ -50,11 +61,12 @@ import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
+import net.runelite.client.config.FontType;
 import net.runelite.client.eventbus.Subscribe;
+import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
-
 @Slf4j
 @PluginDescriptor(
 	name = "Modern Boss Healthbar",
@@ -73,8 +85,35 @@ public class BossHealthBarPlugin extends Plugin
 	private static final int TOB_PROGRESS_BOSS_HEALTH = 1;
 	// How far from the player, in tiles, to look for the boss of the current Theatre of Blood room.
 	private static final int TOB_BOSS_SEARCH_DISTANCE = 32;
+	// The game message sent when a superior slayer monster spawns for you. It arrives wrapped in
+	// color markers, such as "@mes_hl_red@A superior foe has appeared...</col>".
+	private static final String SUPERIOR_SPAWN_MESSAGE = "A superior foe has appeared";
+	// How many ticks apart the superior's spawn and its message may be to still be matched.
+	private static final int SUPERIOR_MATCH_TICKS = 2;
+	// How far from the player, in tiles, a newly spawned NPC can be to count as your superior.
+	private static final int SUPERIOR_SEARCH_DISTANCE = 15;
 	private static final String VANILLA_OVERLAY_GROUP = "opponentinfo";
 	private static final String VANILLA_OVERLAY_KEY = "showOpponentHealthOverlay";
+	// Kept in this plugin's config group rather than in memory, so the original value can still be
+	// restored after the client closes while the plugin is on.
+	private static final String SAVED_VANILLA_OVERLAY_KEY = "savedOpponentHealthOverlay";
+	private static final String VANILLA_OVERLAY_HIDDEN_KEY = "opponentHealthOverlayHidden";
+	// Themes that have been removed, and the closest current theme each saved choice moves to.
+	private static final Map<String, HealthBarTheme> REMOVED_THEMES = ImmutableMap.<String, HealthBarTheme>builder()
+		.put("ASHEN_CRIMSON", HealthBarTheme.ZAMORAK)
+		.put("EMBERFALL", HealthBarTheme.RALOS)
+		.put("GILDED_BLOOD", HealthBarTheme.ZAMORAK)
+		.put("FROSTBOUND", HealthBarTheme.SARADOMIN)
+		.put("ABYSSAL", HealthBarTheme.ZAROS)
+		.put("OBSIDIAN", HealthBarTheme.ARMADYL)
+		.put("VERDANT", HealthBarTheme.GUTHIX)
+		.put("VENOM", HealthBarTheme.BANDOS)
+		.put("SUNFORGED", HealthBarTheme.TUMEKEN)
+		.put("DUSKROSE", HealthBarTheme.ZAROS)
+		.build();
+	// The removed font choice and text size percentage, replaced by the font setting.
+	private static final String OLD_FONT_STYLE_KEY = "fontStyle";
+	private static final String OLD_TEXT_SIZE_KEY = "textSize";
 
 	@Inject
 	private Client client;
@@ -97,8 +136,9 @@ public class BossHealthBarPlugin extends Plugin
 	@Getter(AccessLevel.PACKAGE)
 	private Actor lastOpponent;
 
+	// When the last hit landed on the opponent, from System.currentTimeMillis(), or 0 if none.
 	@Getter(AccessLevel.PACKAGE)
-	private Instant lastHitTime;
+	private long lastHitMillis;
 
 	@Getter(AccessLevel.PACKAGE)
 	private int lastHitAmount;
@@ -106,12 +146,12 @@ public class BossHealthBarPlugin extends Plugin
 	@Getter(AccessLevel.PACKAGE)
 	private int comboDamage;
 
+	// When your last hit landed, from System.currentTimeMillis(), or 0 if none.
 	@Getter(AccessLevel.PACKAGE)
-	private Instant lastDamageDealtTime;
+	private long lastDamageDealtMillis;
 
-	private Instant lastInteractionLostTime;
-	private String savedVanillaOverlayValue;
-	private boolean vanillaOverlayOverridden;
+	// When you stopped interacting with the opponent, from System.currentTimeMillis(), or 0 if you haven't.
+	private long lastInteractionLostMillis;
 	private boolean nativeBarHidden;
 	private NPC nativeBarNpc;
 	private int nativeBarSearchedId = -1;
@@ -119,6 +159,11 @@ public class BossHealthBarPlugin extends Plugin
 	private boolean tobBarHidden;
 	private NPC tobBoss;
 	private boolean tobBossSearchNeeded = true;
+	// NPCs that spawned in the last few ticks, with the tick they spawned on.
+	private final Map<NPC, Integer> recentSpawnTicks = new HashMap<>();
+	// Superior slayer monsters you spawned that are still loaded.
+	private final Set<NPC> superiors = new HashSet<>();
+	private int superiorMessageTick = -1;
 
 	@Provides
 	BossHealthBarConfig provideConfig(ConfigManager configManager)
@@ -129,6 +174,10 @@ public class BossHealthBarPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
+		migrateRemovedTheme();
+		migrateOldFontSettings();
+		// The overlay keeps its state while the plugin is off, and misses any config changes made then.
+		overlay.reset();
 		overlayManager.add(overlay);
 		applyVanillaOverlayOverride();
 	}
@@ -138,20 +187,185 @@ public class BossHealthBarPlugin extends Plugin
 	{
 		overlayManager.remove(overlay);
 		restoreVanillaOverlay();
+		// The client thread reads and changes this state, so clear it there.
 		clientThread.invoke(() ->
 		{
 			restoreNativeBar();
 			restoreTobBar();
+			resetState();
 		});
+	}
+
+	/**
+	 * Moves a saved theme that no longer exists to the closest current theme, so the setting isn't
+	 * silently reset to the default.
+	 */
+	private void migrateRemovedTheme()
+	{
+		final String saved = configManager.getConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.THEME_KEY);
+		final HealthBarTheme replacement = saved != null ? REMOVED_THEMES.get(saved) : null;
+		if (replacement != null)
+		{
+			configManager.setConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.THEME_KEY, replacement);
+		}
+	}
+
+	/**
+	 * Turns the removed font choice and text size settings into the font setting, with the family,
+	 * size and weight the old choice was drawn with, then removes them.
+	 */
+	private void migrateOldFontSettings()
+	{
+		final String style = configManager.getConfiguration(BossHealthBarConfig.GROUP, OLD_FONT_STYLE_KEY);
+		final String textSize = configManager.getConfiguration(BossHealthBarConfig.GROUP, OLD_TEXT_SIZE_KEY);
+		if (style == null && textSize == null)
+		{
+			return;
+		}
+
+		if (configManager.getConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.FONT_KEY) == null)
+		{
+			float scale = 1f;
+			if (textSize != null)
+			{
+				try
+				{
+					scale = Integer.parseInt(textSize) / 100f;
+				}
+				catch (NumberFormatException e)
+				{
+					log.debug("Ignoring invalid saved text size {}", textSize);
+				}
+			}
+
+			final FontType font;
+			if ("RUNESCAPE".equals(style))
+			{
+				font = FontType.BOLD.withSize(Math.round(16 * scale));
+			}
+			else if ("SANS_SERIF".equals(style))
+			{
+				font = new FontType().withFamily(Font.SANS_SERIF).withBold(true).withSize(Math.round(15 * scale));
+			}
+			else
+			{
+				font = BossHealthBarConfig.DEFAULT_FONT.withSize(Math.round(17 * scale));
+			}
+			configManager.setConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.FONT_KEY, font);
+		}
+
+		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, OLD_FONT_STYLE_KEY);
+		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, OLD_TEXT_SIZE_KEY);
+	}
+
+	/**
+	 * Fills in the custom colors with the colors of the theme selected before switching to Custom,
+	 * so they can be tweaked from there.
+	 *
+	 * @param previousValue the saved name of the previous theme, or null when it was the default
+	 */
+	private void copyThemeToCustomColors(String previousValue)
+	{
+		HealthBarTheme previous = BossHealthBarConfig.DEFAULT_THEME;
+		if (previousValue != null)
+		{
+			previous = null;
+			for (HealthBarTheme theme : HealthBarTheme.values())
+			{
+				if (theme.name().equals(previousValue))
+				{
+					previous = theme;
+				}
+			}
+		}
+
+		final ThemeColors colors = previous != null ? previous.getColors() : null;
+		if (colors == null)
+		{
+			return;
+		}
+
+		setCustomColor("customFillHighColor", colors.getFillHigh());
+		setCustomColor("customFillLowColor", colors.getFillLow());
+		setCustomColor("customTrailColor", colors.getTrail());
+		setCustomColor("customFrameColor", colors.getFrame());
+		setCustomColor("customOrnamentColor", colors.getOrnament());
+		setCustomColor("customGemColor", colors.getGem());
+		setCustomColor("customTextColor", colors.getText());
+		setCustomColor("customLevelTextColor", colors.getLevelText());
+		setCustomColor("customHitpointsTextColor", colors.getHitpointsText());
+		setCustomColor("customDefeatedTextColor", colors.getDefeatedText());
+	}
+
+	private void setCustomColor(String key, Color color)
+	{
+		configManager.setConfiguration(BossHealthBarConfig.GROUP, key, color);
+	}
+
+	/**
+	 * Clears everything known about the opponent and nearby NPCs when logging out or hopping worlds,
+	 * since those NPCs are gone.
+	 */
+	@Subscribe
+	public void onGameStateChanged(GameStateChanged event)
+	{
+		if (event.getGameState() == GameState.LOGIN_SCREEN || event.getGameState() == GameState.HOPPING)
+		{
+			resetState();
+		}
+	}
+
+	private void resetState()
+	{
+		// The game's bars are unloaded on the login screen, and restored before this on shutdown.
+		nativeBarHidden = false;
+		tobBarHidden = false;
 		lastOpponent = null;
 		nativeBarNpc = null;
 		nativeBarSearchedId = -1;
 		replacedNativeBarNpcId = -1;
 		tobBoss = null;
 		tobBossSearchNeeded = true;
-		lastHitTime = null;
-		lastInteractionLostTime = null;
+		recentSpawnTicks.clear();
+		superiors.clear();
+		superiorMessageTick = -1;
+		lastHitMillis = 0;
+		lastInteractionLostMillis = 0;
 		resetComboDamage();
+	}
+
+	/**
+	 * Makes the overlay read its colors again when any setting of this plugin changes, so a new
+	 * theme or custom color shows on the next frame, and hides or restores the "Opponent
+	 * Information" health overlay when that setting is toggled.
+	 */
+	@Subscribe
+	public void onConfigChanged(ConfigChanged event)
+	{
+		if (!BossHealthBarConfig.GROUP.equals(event.getGroup()))
+		{
+			return;
+		}
+
+		overlay.invalidateColors();
+
+		if (BossHealthBarConfig.THEME_KEY.equals(event.getKey())
+			&& HealthBarTheme.CUSTOM.name().equals(event.getNewValue()))
+		{
+			copyThemeToCustomColors(event.getOldValue());
+		}
+
+		if (BossHealthBarConfig.HIDE_VANILLA_OVERLAY_KEY.equals(event.getKey()))
+		{
+			if (config.hideVanillaOverlay())
+			{
+				applyVanillaOverlayOverride();
+			}
+			else
+			{
+				restoreVanillaOverlay();
+			}
+		}
 	}
 
 	@Subscribe
@@ -166,12 +380,12 @@ public class BossHealthBarPlugin extends Plugin
 
 		if (opponent == null)
 		{
-			lastInteractionLostTime = Instant.now();
+			lastInteractionLostMillis = System.currentTimeMillis();
 			log.debug("Interaction lost with {}, will clear after {}s if not resumed", lastOpponent, config.hideDelay());
 			return;
 		}
 
-		lastInteractionLostTime = null;
+		lastInteractionLostMillis = 0;
 
 		if (opponent == lastOpponent)
 		{
@@ -208,7 +422,7 @@ public class BossHealthBarPlugin extends Plugin
 		{
 			return -1;
 		}
-		if (actor == findNativeBarNpc() || actor == findTobBoss())
+		if (isNativeBarNpc(actor) || actor == findTobBoss())
 		{
 			return 2;
 		}
@@ -219,7 +433,7 @@ public class BossHealthBarPlugin extends Plugin
 	 * Returns the NPC whose health the Theatre of Blood boss bar shows, or null when that bar isn't
 	 * up or shows room progress. The bar doesn't say which NPC it belongs to, so this picks the
 	 * nearby attackable NPC with the highest combat level, and the largest one on a tie. The result
-	 * is cached until an NPC spawns, changes or despawns.
+	 * is cached until an NPC that could replace it spawns or changes, or the boss despawns.
 	 */
 	private NPC findTobBoss()
 	{
@@ -292,26 +506,68 @@ public class BossHealthBarPlugin extends Plugin
 	}
 
 	/**
-	 * Whether a game boss bar is showing this opponent. Only checks the cached results of
-	 * {@link #findNativeBarNpc()} and {@link #findTobBoss()}, so it doesn't search the NPC list.
+	 * Whether a game boss bar is showing this opponent. Only checks the tracked NPC ID and the
+	 * cached result of {@link #findTobBoss()}, so it doesn't search the NPC list.
 	 */
 	private boolean isGameBarBoss(Actor opponent)
 	{
-		return opponent != null && (opponent == nativeBarNpc || opponent == tobBoss);
+		return opponent != null && (isNativeBarNpc(opponent) || opponent == tobBoss);
 	}
 
 	/**
-	 * Returns the loaded NPC that the game's boss bar is tracking, or null if there is none. The
-	 * result is cached, and the NPC list is only searched again when the tracked NPC ID changes or
-	 * an NPC spawns.
+	 * The NPC ID the game's boss bar tracks, or -1 when it tracks none or is turned off in the game
+	 * settings.
+	 */
+	private int nativeBarNpcId()
+	{
+		if (client.getVarbitValue(VarbitID.HPBAR_HUD_BOSS_DISABLED) != 0)
+		{
+			return -1;
+		}
+		return client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
+	}
+
+	/**
+	 * Whether the actor is an NPC with the ID the game's boss bar tracks. Several loaded NPCs can
+	 * share that ID.
+	 */
+	private boolean isNativeBarNpc(Actor actor)
+	{
+		if (!(actor instanceof NPC))
+		{
+			return false;
+		}
+		final int trackedId = nativeBarNpcId();
+		return trackedId != -1 && compositionId((NPC) actor) == trackedId;
+	}
+
+	/**
+	 * Returns the loaded NPC that the game's boss bar is tracking, or null if there is none. When
+	 * several NPCs share the tracked ID, the current opponent or the NPC you are attacking is
+	 * preferred. Otherwise the result is cached, and the NPC list is only searched again when the
+	 * tracked NPC ID changes or an NPC spawns.
 	 */
 	private NPC findNativeBarNpc()
 	{
-		final int trackedId = client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
+		final int trackedId = nativeBarNpcId();
 		if (trackedId == -1)
 		{
 			nativeBarNpc = null;
 			return null;
+		}
+
+		if (isNativeBarNpc(lastOpponent))
+		{
+			nativeBarNpc = (NPC) lastOpponent;
+			return nativeBarNpc;
+		}
+
+		final Player player = client.getLocalPlayer();
+		final Actor target = player != null ? player.getInteracting() : null;
+		if (isNativeBarNpc(target))
+		{
+			nativeBarNpc = (NPC) target;
+			return nativeBarNpc;
 		}
 
 		if (nativeBarNpc != null && compositionId(nativeBarNpc) == trackedId)
@@ -359,18 +615,24 @@ public class BossHealthBarPlugin extends Plugin
 		}
 
 		final Hitsplat hitsplat = event.getHitsplat();
-		final Instant now = Instant.now();
-		lastHitTime = now;
+		if (hitsplat.getAmount() <= 0 || hitsplat.getHitsplatType() == HitsplatID.HEAL)
+		{
+			// Misses and heals don't remove health, so they shouldn't flash the bar or hold the trail.
+			return;
+		}
+
+		final long now = System.currentTimeMillis();
+		lastHitMillis = now;
 		lastHitAmount = hitsplat.getAmount();
 
-		if (hitsplat.isMine() && hitsplat.getAmount() > 0)
+		if (hitsplat.isMine())
 		{
-			if (lastDamageDealtTime == null || Duration.between(lastDamageDealtTime, now).compareTo(DAMAGE_COMBO_WINDOW) > 0)
+			if (lastDamageDealtMillis == 0 || now - lastDamageDealtMillis > DAMAGE_COMBO_WINDOW.toMillis())
 			{
 				comboDamage = 0;
 			}
 			comboDamage += hitsplat.getAmount();
-			lastDamageDealtTime = now;
+			lastDamageDealtMillis = now;
 		}
 	}
 
@@ -379,14 +641,90 @@ public class BossHealthBarPlugin extends Plugin
 	{
 		// The boss may have just appeared or reappeared, so search for it again.
 		nativeBarSearchedId = -1;
-		tobBossSearchNeeded = true;
+		if (mayBeTobBoss(event.getNpc()))
+		{
+			tobBossSearchNeeded = true;
+		}
+		recentSpawnTicks.put(event.getNpc(), client.getTickCount());
+	}
+
+	/**
+	 * Notes when the game says a superior slayer monster has spawned for you. The NPC itself is
+	 * picked out on the game tick, by {@link #markSuperior()}.
+	 */
+	@Subscribe
+	public void onChatMessage(ChatMessage event)
+	{
+		if ((event.getType() == ChatMessageType.GAMEMESSAGE || event.getType() == ChatMessageType.SPAM)
+			&& event.getMessage().contains(SUPERIOR_SPAWN_MESSAGE))
+		{
+			superiorMessageTick = client.getTickCount();
+			log.debug("Superior spawn message on tick {}", superiorMessageTick);
+		}
+	}
+
+	/**
+	 * After a superior spawn message, marks the attackable NPC that spawned closest to the player
+	 * within a few ticks of the message as a superior. The message and the spawn can arrive in either
+	 * order, so this keeps trying for {@link #SUPERIOR_MATCH_TICKS} ticks.
+	 */
+	private void markSuperior()
+	{
+		final int tick = client.getTickCount();
+		recentSpawnTicks.values().removeIf(spawnTick -> tick - spawnTick > SUPERIOR_MATCH_TICKS);
+
+		if (superiorMessageTick == -1)
+		{
+			return;
+		}
+
+		final Player player = client.getLocalPlayer();
+		NPC nearest = null;
+		int nearestDistance = Integer.MAX_VALUE;
+		if (player != null)
+		{
+			for (NPC npc : recentSpawnTicks.keySet())
+			{
+				final int distance = npc.getWorldLocation().distanceTo(player.getWorldLocation());
+				if (!npc.isDead() && !superiors.contains(npc) && isAttackable(npc)
+					&& distance <= SUPERIOR_SEARCH_DISTANCE && distance < nearestDistance)
+				{
+					nearest = npc;
+					nearestDistance = distance;
+				}
+			}
+		}
+
+		if (nearest != null)
+		{
+			superiors.add(nearest);
+			superiorMessageTick = -1;
+			log.debug("Marked {} as a superior", nearest.getName());
+		}
+		else if (tick - superiorMessageTick >= SUPERIOR_MATCH_TICKS)
+		{
+			superiorMessageTick = -1;
+			log.debug("No spawned NPC found for the superior spawn message");
+		}
 	}
 
 	@Subscribe
 	public void onNpcChanged(NpcChanged event)
 	{
 		// Some bosses change form between phases, which can change their combat level.
-		tobBossSearchNeeded = true;
+		if (event.getNpc() == tobBoss || mayBeTobBoss(event.getNpc()))
+		{
+			tobBossSearchNeeded = true;
+		}
+	}
+
+	/**
+	 * Whether a spawned or changed NPC could be picked over the current Theatre of Blood boss, so
+	 * the many smaller NPCs that spawn in some rooms don't each cause a search.
+	 */
+	private boolean mayBeTobBoss(NPC npc)
+	{
+		return tobBoss == null || npc.getCombatLevel() >= tobBoss.getCombatLevel();
 	}
 
 	/**
@@ -403,9 +741,12 @@ public class BossHealthBarPlugin extends Plugin
 		}
 		if (event.getNpc() == tobBoss)
 		{
+			// Only losing the boss itself can change which NPC is picked.
 			tobBoss = null;
+			tobBossSearchNeeded = true;
 		}
-		tobBossSearchNeeded = true;
+		recentSpawnTicks.remove(event.getNpc());
+		superiors.remove(event.getNpc());
 
 		if (event.getNpc() != lastOpponent)
 		{
@@ -414,14 +755,14 @@ public class BossHealthBarPlugin extends Plugin
 
 		log.debug("Opponent {} despawned, clearing", lastOpponent);
 		lastOpponent = null;
-		lastInteractionLostTime = null;
+		lastInteractionLostMillis = 0;
 		resetComboDamage();
 	}
 
 	private void resetComboDamage()
 	{
 		comboDamage = 0;
-		lastDamageDealtTime = null;
+		lastDamageDealtMillis = 0;
 	}
 
 	/**
@@ -437,12 +778,16 @@ public class BossHealthBarPlugin extends Plugin
 			tobBossSearchNeeded = true;
 		}
 
+		markSuperior();
+
+		final Player player = client.getLocalPlayer();
 		if (lastOpponent != null
+			&& player != null
 			&& lastOpponent != findNativeBarNpc()
 			&& lastOpponent != findTobBoss()
-			&& lastInteractionLostTime != null
-			&& client.getLocalPlayer().getInteracting() == null
-			&& Duration.between(lastInteractionLostTime, Instant.now()).compareTo(Duration.ofSeconds(config.hideDelay())) > 0)
+			&& lastInteractionLostMillis != 0
+			&& player.getInteracting() == null
+			&& System.currentTimeMillis() - lastInteractionLostMillis > config.hideDelay() * 1000L)
 		{
 			log.debug("Opponent {} timed out after {}s with no interaction, clearing", lastOpponent, config.hideDelay());
 			lastOpponent = null;
@@ -462,7 +807,7 @@ public class BossHealthBarPlugin extends Plugin
 		if (gameBarBoss != null && !gameBarBoss.isDead() && gameBarBoss != lastOpponent)
 		{
 			setOpponent(gameBarBoss);
-			lastInteractionLostTime = null;
+			lastInteractionLostMillis = 0;
 		}
 
 		updateNativeBar();
@@ -488,14 +833,13 @@ public class BossHealthBarPlugin extends Plugin
 			if (shouldShowBarFor(lastOpponent) && isNativeBarTracking(lastOpponent))
 			{
 				replace = true;
-				replacedNativeBarNpcId = client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
+				replacedNativeBarNpcId = nativeBarNpcId();
 			}
 			else
 			{
 				// After the boss dies and despawns, the game's bar can stay up on it while this bar
 				// plays its defeat animation, so keep it hidden until it tracks a different NPC.
-				replace = replacedNativeBarNpcId != -1
-					&& client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC) == replacedNativeBarNpcId;
+				replace = replacedNativeBarNpcId != -1 && nativeBarNpcId() == replacedNativeBarNpcId;
 			}
 		}
 
@@ -550,11 +894,12 @@ public class BossHealthBarPlugin extends Plugin
 	}
 
 	/**
-	 * Shows the game's boss bar again, if this plugin hid it.
+	 * Shows the game's boss bar again, if this plugin hid it and the game still tracks an NPC with
+	 * it. That way a bar the game no longer wants shown doesn't reappear with outdated health.
 	 */
 	private void restoreNativeBar()
 	{
-		if (!nativeBarHidden)
+		if (!nativeBarHidden || nativeBarNpcId() == -1)
 		{
 			return;
 		}
@@ -588,13 +933,17 @@ public class BossHealthBarPlugin extends Plugin
 
 	/**
 	 * Whether the opponent should get a bar: it must have a name and, when "Only show for bosses"
-	 * is on, either meet the minimum combat level or be shown by a game boss bar.
+	 * is on, either meet the minimum combat level, be shown by a game boss bar, or be a superior
+	 * slayer monster you spawned while "Show for superior slayer monsters" is on.
 	 */
 	boolean shouldShowBarFor(Actor opponent)
 	{
 		return opponent != null
 			&& opponent.getName() != null
-			&& (!config.bossOnly() || opponent.getCombatLevel() >= config.minimumCombatLevel() || isGameBarBoss(opponent));
+			&& (!config.bossOnly()
+				|| opponent.getCombatLevel() >= config.minimumCombatLevel()
+				|| isGameBarBoss(opponent)
+				|| (config.showSuperiors() && superiors.contains(opponent)));
 	}
 
 	/**
@@ -602,31 +951,37 @@ public class BossHealthBarPlugin extends Plugin
 	 */
 	boolean isNativeBarTracking(Actor opponent)
 	{
-		if (!(opponent instanceof NPC) || client.getVarbitValue(VarbitID.HPBAR_HUD_BOSS_DISABLED) != 0)
-		{
-			return false;
-		}
-
-		final int trackedId = client.getVarpValue(VarPlayerID.HPBAR_HUD_NPC);
-		final NPCComposition composition = ((NPC) opponent).getComposition();
-		return trackedId != -1 && composition != null && trackedId == composition.getId();
+		return isNativeBarNpc(opponent);
 	}
 
 	/**
 	 * Turns off the health overlay of RuneLite's "Opponent Information" plugin when the "Hide
 	 * vanilla opponent overlay" setting is on, saving its previous value for
-	 * {@link #restoreVanillaOverlay()}.
+	 * {@link #restoreVanillaOverlay()}. If the value was already saved, such as when the client
+	 * closed while this plugin was on, the saved value is kept instead of being overwritten.
 	 */
 	private void applyVanillaOverlayOverride()
 	{
-		if (!config.hideVanillaOverlay() || vanillaOverlayOverridden)
+		if (!config.hideVanillaOverlay())
 		{
 			return;
 		}
 
-		savedVanillaOverlayValue = configManager.getConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY);
-		configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, "false");
-		vanillaOverlayOverridden = true;
+		if (!isVanillaOverlayHidden())
+		{
+			final String current = configManager.getConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY);
+			if (current == null)
+			{
+				configManager.unsetConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY);
+			}
+			else
+			{
+				configManager.setConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY, current);
+			}
+			configManager.setConfiguration(BossHealthBarConfig.GROUP, VANILLA_OVERLAY_HIDDEN_KEY, true);
+		}
+
+		configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, false);
 	}
 
 	/**
@@ -634,21 +989,31 @@ public class BossHealthBarPlugin extends Plugin
 	 */
 	private void restoreVanillaOverlay()
 	{
-		if (!vanillaOverlayOverridden)
+		if (!isVanillaOverlayHidden())
 		{
 			return;
 		}
 
-		if (savedVanillaOverlayValue == null)
+		final String saved = configManager.getConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY);
+		if (saved == null)
 		{
 			configManager.unsetConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY);
 		}
 		else
 		{
-			configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, savedVanillaOverlayValue);
+			configManager.setConfiguration(VANILLA_OVERLAY_GROUP, VANILLA_OVERLAY_KEY, saved);
 		}
 
-		vanillaOverlayOverridden = false;
-		savedVanillaOverlayValue = null;
+		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, SAVED_VANILLA_OVERLAY_KEY);
+		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, VANILLA_OVERLAY_HIDDEN_KEY);
+	}
+
+	/**
+	 * Whether this plugin has turned off the "Opponent Information" health overlay and not yet put
+	 * it back.
+	 */
+	private boolean isVanillaOverlayHidden()
+	{
+		return Boolean.parseBoolean(configManager.getConfiguration(BossHealthBarConfig.GROUP, VANILLA_OVERLAY_HIDDEN_KEY));
 	}
 }
