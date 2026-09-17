@@ -283,9 +283,10 @@ class BossHealthBarOverlay extends Overlay
 	}
 
 	/**
-	 * Returns the colors of the selected theme, or the custom colors when the theme is Custom.
+	 * Returns the colors of the selected theme, or the custom colors when the theme is Custom. The
+	 * colors mixed from them are rebuilt at the same time, so this also refreshes those fields.
 	 */
-	private ThemeColors getThemeColors()
+	private ThemeColors updateThemeColors()
 	{
 		if (themeColors == null)
 		{
@@ -409,7 +410,7 @@ class BossHealthBarOverlay extends Overlay
 		// doesn't grow and move the bar when the label appears.
 		final int footerHeight = hpText != null || defeated || config.showDefeatAnimation()
 			? Math.round(FOOTER_HEIGHT * textScale) : 0;
-		final ThemeColors colors = getThemeColors();
+		final ThemeColors colors = updateThemeColors();
 
 		final OrnamentRenderer.Ornament ornament = ornamentRenderer.getOrnament(
 			config.ornamentStyle(), colors, ornamentScale(barHeight) * config.ornamentSize() / 100f,
