@@ -496,8 +496,7 @@ class BossHealthBarOverlay extends Overlay
 		}
 
 		graphics.translate(shownInset, 0);
-		drawBar(graphics, state.maxHealth, barY, shownWidth, barHeight, colors,
-			defeated ? NO_PHASE_MARKERS : state.phaseMarkers, lowHealthPulse(defeated), fillProgress, shownWidth == width);
+		drawBar(graphics, state, defeated, barY, shownWidth, barHeight, fillProgress, shownWidth == width);
 		graphics.translate(-shownInset, 0);
 
 		setOpacity(graphics, originalComposite, opacity * textOpacity);
@@ -1029,20 +1028,21 @@ class BossHealthBarOverlay extends Overlay
 	 * Draws the bar itself: the track, damage trail, heal preview, fill, frame, phase markers, end
 	 * pieces and the big hit flash.
 	 *
-	 * @param maxHealth the opponent's max hitpoints, used to decide whether the last hit was big, or
-	 *                  null when unknown, in which case the bar doesn't flash
+	 * @param defeated whether the opponent is playing out its defeat, which drops the phase markers
+	 *                 and the low health effect
 	 * @param y the top of the bar
 	 * @param width the full width including the end pieces
 	 * @param height the bar height
-	 * @param phaseMarkers marker positions as fractions of the bar
-	 * @param lowHealthPulse the strength of the low health effect this frame, from 0 (off) to 1
 	 * @param fillProgress how far the intro's fill sweep has got, from 0 (empty) to 1 (the real health)
 	 * @param useImageCache whether to draw the backdrop and end pieces from cached images, which is
 	 *                      skipped while the intro changes the width every frame
 	 */
-	private void drawBar(Graphics2D graphics, Integer maxHealth, int y, int width, int height, ThemeColors colors,
-		float[] phaseMarkers, float lowHealthPulse, float fillProgress, boolean useImageCache)
+	private void drawBar(Graphics2D graphics, BarState state, boolean defeated, int y, int width, int height,
+		float fillProgress, boolean useImageCache)
 	{
+		final ThemeColors colors = themeColors;
+		final float[] phaseMarkers = defeated ? NO_PHASE_MARKERS : state.phaseMarkers;
+		final float lowHealthPulse = lowHealthPulse(defeated);
 		final Color frameColor = colors.getFrame();
 		final int barX = CAP_WIDTH;
 		final int barWidth = width - CAP_WIDTH * 2;
@@ -1153,10 +1153,10 @@ class BossHealthBarOverlay extends Overlay
 			drawEnds(graphics, barX, y, barWidth, height, frameColor);
 		}
 
-		if (config.flashOnBigHits() && maxHealth != null)
+		if (config.flashOnBigHits() && state.maxHealth != null)
 		{
 			final long lastHit = plugin.getLastHitMillis();
-			if (lastHit != 0 && plugin.getLastHitAmount() >= maxHealth * BIG_HIT_FRACTION)
+			if (lastHit != 0 && plugin.getLastHitAmount() >= state.maxHealth * BIG_HIT_FRACTION)
 			{
 				final long since = System.currentTimeMillis() - lastHit;
 				if (since < FLASH_DURATION.toMillis())
