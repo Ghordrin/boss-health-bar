@@ -310,12 +310,12 @@ class BossHealthBarOverlay extends Overlay
 		return themeColors;
 	}
 
-	@Override
-	public Dimension render(Graphics2D graphics)
+	/**
+	 * Picks what the bar draws this frame: the current opponent, the one still playing out its
+	 * defeat, or the preview. Returns null when nothing should be drawn.
+	 */
+	private BarState selectState(Actor opponent, long now)
 	{
-		final Actor opponent = plugin.getLastOpponent();
-		final long now = System.nanoTime();
-
 		if (opponent != trackedOpponent)
 		{
 			if (opponent == null && trackedOpponent != null && lastState != null && defeatStartNanos == 0
@@ -335,10 +335,9 @@ class BossHealthBarOverlay extends Overlay
 		final boolean wasShowingPreview = showingPreview;
 		showingPreview = false;
 
-		final BarState state;
 		if (opponent != null)
 		{
-			state = readState(opponent);
+			final BarState state = readState(opponent);
 			if (state == null)
 			{
 				return null;
@@ -354,12 +353,15 @@ class BossHealthBarOverlay extends Overlay
 			{
 				defeatStartNanos = now;
 			}
+			return state;
 		}
-		else if (defeatStartNanos != 0 && lastState != null)
+
+		if (defeatStartNanos != 0 && lastState != null)
 		{
-			state = lastState;
+			return lastState;
 		}
-		else if (config.showPreview())
+
+		if (config.showPreview())
 		{
 			if (!wasShowingPreview)
 			{
@@ -368,34 +370,73 @@ class BossHealthBarOverlay extends Overlay
 				previewStartNanos = now;
 			}
 			showingPreview = true;
-			state = previewState(now);
+			return previewState(now);
 		}
-		else
+
+		return null;
+	}
+
+	/**
+	 * The opacity the defeat animation is at: 1 while it holds or isn't playing, fading to 0 after
+	 * the hold, and -1 once it has played out and the bar should stop drawing.
+	 */
+	private float defeatOpacity(Actor opponent, long now)
+	{
+		if (defeatStartNanos == 0)
+		{
+			return 1f;
+		}
+
+		final long elapsed = now - defeatStartNanos;
+		final long hold = DEFEAT_HOLD.toNanos();
+		final long fade = DEFEAT_FADE.toNanos();
+		if (elapsed >= hold + fade)
+		{
+			if (opponent == null)
+			{
+				// The ending has played out, so forget the opponent and let the preview show again.
+				trackedOpponent = null;
+				resetAnimation();
+			}
+			return -1f;
+		}
+
+		return elapsed > hold ? 1f - (elapsed - hold) / (float) fade : 1f;
+	}
+
+	/**
+	 * Scalable fonts are antialiased and use fractional metrics, so resized text stays smooth and
+	 * evenly spaced. Pixel fonts get neither: their strokes are a single pixel wide, so smoothing
+	 * them leaves grey fringes, and fractional metrics put glyphs on part pixels where they blur.
+	 */
+	private void applyTextHints(Graphics2D graphics)
+	{
+		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, pixelFont
+			? RenderingHints.VALUE_TEXT_ANTIALIAS_OFF
+			: RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, pixelFont
+			? RenderingHints.VALUE_FRACTIONALMETRICS_OFF
+			: RenderingHints.VALUE_FRACTIONALMETRICS_ON);
+		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+	}
+
+	@Override
+	public Dimension render(Graphics2D graphics)
+	{
+		final Actor opponent = plugin.getLastOpponent();
+		final long now = System.nanoTime();
+
+		final BarState state = selectState(opponent, now);
+		if (state == null)
 		{
 			return null;
 		}
 
 		final boolean defeated = defeatStartNanos != 0;
-		float defeatOpacity = 1f;
-		if (defeated)
+		final float defeatOpacity = defeatOpacity(opponent, now);
+		if (defeatOpacity < 0f)
 		{
-			final long elapsed = now - defeatStartNanos;
-			final long hold = DEFEAT_HOLD.toNanos();
-			final long fade = DEFEAT_FADE.toNanos();
-			if (elapsed >= hold + fade)
-			{
-				if (opponent == null)
-				{
-					// The ending has played out, so forget the opponent and let the preview show again.
-					trackedOpponent = null;
-					resetAnimation();
-				}
-				return null;
-			}
-			if (elapsed > hold)
-			{
-				defeatOpacity = 1f - (elapsed - hold) / (float) fade;
-			}
+			return null;
 		}
 
 		tick(defeated ? 0f : clamp01(state.ratio / (float) state.scale));
@@ -442,16 +483,7 @@ class BossHealthBarOverlay extends Overlay
 		final float opacity = progress(introElapsed, Duration.ZERO, FADE_IN_DURATION) * defeatOpacity;
 		setOpacity(graphics, originalComposite, opacity);
 
-		// Scalable fonts are antialiased and use fractional metrics, so resized text stays smooth and
-		// evenly spaced. Pixel fonts get neither: their strokes are a single pixel wide, so smoothing
-		// them leaves grey fringes, and fractional metrics put glyphs on part pixels where they blur.
-		graphics.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, pixelFont
-			? RenderingHints.VALUE_TEXT_ANTIALIAS_OFF
-			: RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
-		graphics.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, pixelFont
-			? RenderingHints.VALUE_FRACTIONALMETRICS_OFF
-			: RenderingHints.VALUE_FRACTIONALMETRICS_ON);
-		graphics.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+		applyTextHints(graphics);
 
 		graphics.translate(leftExtent, topOffset + slideOffset);
 
