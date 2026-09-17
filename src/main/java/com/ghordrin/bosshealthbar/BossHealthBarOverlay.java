@@ -1055,7 +1055,6 @@ class BossHealthBarOverlay extends Overlay
 
 		graphics.setPaint(new GradientPaint(0, y, TRACK_TOP, 0, y + height, TRACK_BOTTOM));
 		graphics.fillRect(barX, y, barWidth, height);
-		graphics.setPaint(null);
 
 		if (config.showDamageTrail() && trailFraction > displayedFraction)
 		{
@@ -1063,7 +1062,6 @@ class BossHealthBarOverlay extends Overlay
 			int trailWidth = Math.round(innerWidth * clamp01(trailFraction) * fillProgress);
 			graphics.setPaint(verticalSheen(innerY, innerHeight, trail, 0.2f, 0.35f));
 			graphics.fillRect(innerX, innerY, trailWidth, innerHeight);
-			graphics.setPaint(null);
 		}
 
 		// After a heal, the new health shows at once as a lighter section that the fill grows into.
@@ -1072,14 +1070,12 @@ class BossHealthBarOverlay extends Overlay
 		{
 			graphics.setPaint(verticalSheen(innerY, innerHeight, healColor, 0.35f, 0.3f));
 			graphics.fillRect(innerX, innerY, healWidth, innerHeight);
-			graphics.setPaint(null);
 		}
 
 		if (fillWidth > 0)
 		{
 			graphics.setPaint(verticalSheen(innerY, innerHeight, fill, 0.3f, 0.45f));
 			graphics.fillRect(innerX, innerY, fillWidth, innerHeight);
-			graphics.setPaint(null);
 
 			// Highlight along the top edge of the fill.
 			graphics.setColor(withAlpha(brighten(fill, 0.6f), 90));
@@ -1257,7 +1253,6 @@ class BossHealthBarOverlay extends Overlay
 		final int[] rightXs = {rightCx, rightCx + diamond, rightCx, rightCx - diamond};
 		graphics.fillPolygon(leftXs, ys, 4);
 		graphics.fillPolygon(rightXs, ys, 4);
-		graphics.setPaint(null);
 
 		graphics.setStroke(THIN_STROKE);
 		graphics.setColor(DIAMOND_OUTLINE);
@@ -1280,7 +1275,6 @@ class BossHealthBarOverlay extends Overlay
 			new float[]{0f, 0.5f, 1f},
 			new Color[]{withAlpha(frameColor, 0), withAlpha(brighten(frameColor, 0.2f), 80), withAlpha(frameColor, 0)}));
 		graphics.fillRect(barX, y + 1, barWidth, 1);
-		graphics.setPaint(null);
 	}
 
 	/**
