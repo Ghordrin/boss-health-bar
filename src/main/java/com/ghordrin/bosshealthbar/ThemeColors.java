@@ -19,49 +19,25 @@ class ThemeColors
 	 * The fill color at full health. The fill blends from this to {@link #fillLow} as health drops.
 	 */
 	Color fillHigh;
-
-	/**
-	 * The fill color at zero health.
-	 */
 	Color fillLow;
-
-	/**
-	 * The color of the damage trail.
-	 */
 	Color trail;
 
 	/**
-	 * The color of the bar's frame, end pieces, underline and phase markers.
+	 * The frame, end pieces, underline and phase markers.
 	 */
 	Color frame;
 
 	/**
-	 * The metal color of the ornaments.
+	 * The metal of the ornaments. Pieces made of another material mix it with that material's color.
 	 */
 	Color ornament;
-
-	/**
-	 * The color of the gems on the ornaments.
-	 */
 	Color gem;
 
 	/**
-	 * The color of the name and damage number.
+	 * The opponent's name and the damage number.
 	 */
 	Color text;
-
-	/**
-	 * The color of the combat level next to the name.
-	 */
 	Color levelText;
-
-	/**
-	 * The color of the hitpoints text below the bar.
-	 */
 	Color hitpointsText;
-
-	/**
-	 * The color of the "Defeated" label.
-	 */
 	Color defeatedText;
 }
