@@ -682,11 +682,20 @@ class BossHealthBarOverlay extends Overlay
 				{
 					markers = new float[PHASE_MARKER_VARBITS.length];
 				}
-				markers[count++] = clamp01((value - 1) / (float) maxHealth);
+				markers[count++] = markerFraction(value, maxHealth);
 			}
 		}
 		phaseMarkers = markers == null ? NO_PHASE_MARKERS : Arrays.copyOf(markers, count);
 		return phaseMarkers;
+	}
+
+	/**
+	 * Where the marker for a hitpoint value sits along the bar, as a fraction from 0 to 1. The game
+	 * places a marker for value v at (v - 1) / max health.
+	 */
+	static float markerFraction(int value, int maxHealth)
+	{
+		return clamp01((value - 1) / (float) maxHealth);
 	}
 
 	/**
@@ -781,7 +790,7 @@ class BossHealthBarOverlay extends Overlay
 	 * The base ornament scale for a bar height, before the "Ornament size" setting: 1 up to a height
 	 * of 8 pixels, then 4% larger per extra pixel.
 	 */
-	private static float ornamentScale(int barHeight)
+	static float ornamentScale(int barHeight)
 	{
 		return 1f + Math.max(0, barHeight - 8) * 0.04f;
 	}
@@ -870,7 +879,7 @@ class BossHealthBarOverlay extends Overlay
 	 *
 	 * @param elapsedNanos the time since the intro started
 	 */
-	private static float progress(long elapsedNanos, Duration delay, Duration duration)
+	static float progress(long elapsedNanos, Duration delay, Duration duration)
 	{
 		return clamp01((elapsedNanos - delay.toNanos()) / (float) duration.toNanos());
 	}
@@ -878,7 +887,7 @@ class BossHealthBarOverlay extends Overlay
 	/**
 	 * Eases a progress from 0 to 1 so it starts quickly and settles gently into place.
 	 */
-	private static float easeOut(float t)
+	static float easeOut(float t)
 	{
 		final float inverse = 1f - t;
 		return 1f - inverse * inverse * inverse;
@@ -1348,7 +1357,7 @@ class BossHealthBarOverlay extends Overlay
 	 * sends healthRatio = 1 + (healthScale - 1) * health / maxHealth, rounded down, for health above
 	 * 0. This returns the middle of the range of health values that give the observed ratio.
 	 */
-	private static int estimateHealth(int ratio, int healthScale, int maxHealth)
+	static int estimateHealth(int ratio, int healthScale, int maxHealth)
 	{
 		if (ratio <= 0)
 		{
@@ -1377,7 +1386,7 @@ class BossHealthBarOverlay extends Overlay
 		return (minHealth + maxHealthForRatio + 1) / 2;
 	}
 
-	private static float clamp01(float value)
+	static float clamp01(float value)
 	{
 		return Math.max(0f, Math.min(1f, value));
 	}
