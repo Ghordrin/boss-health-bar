@@ -1,93 +1,152 @@
 # Modern Boss Healthbar
 
-A RuneLite plugin that replaces the opponent health bar with a themed bar.
+RuneLite already shows you an opponent's health. It's just a small bar tucked up
+in the corner that's easy to forget about. I wanted something I'd actually look
+at during a fight, so I wrote this.
 
-## Features
+It swaps that out for a wide bar with the opponent's name on it, a frame,
+decorations on both ends and a bit of animation.
 
-- **Layout** — a long, thin bar in a frame with end pieces. The opponent's name
-  is shown above the left end, and the bar fades in when a fight starts.
-- **Ornaments** — decorations on both ends of the bar, colored to match the
-  theme and resizable. A godsword hilt and blade tip, a staff with a glowing
-  orb, a skull and bone, a rolled scroll, or bevelled brackets. Can be turned
-  off.
-- **Damage number** — the total damage of your recent hits, shown above the
-  right end of the bar. It resets a few seconds after your last hit.
-- **Damage trail** — damage lowers the fill immediately, and the lost health
-  stays visible as a lighter section for a moment before draining away. Heals
-  refill the bar gradually.
-- **Defeat animation** — when the opponent dies, the empty bar stays with a
-  "Defeated" label for a moment, then fades out.
-- **Intro animation** — when the bar appears it rises into place, widens from
-  its center and sweeps the fill up to the opponent's health. It can also just
-  slide in, just expand, or only fade in.
-- **Low health effect** — the fill pulses and glows once the opponent's health
-  is at or below a set threshold (25% by default).
-- **Fonts** — RuneLite's font picker: the RuneScape fonts, any font installed on
-  your computer, or a .ttf/.otf file added to the `.runelite/fonts` folder,
-  with adjustable size, bold and italic.
-- **Themes** — one for each god, in their colors: Zamorak (default), Saradomin,
-  Guthix, Armadyl, Bandos, Zaros, Seren, Tumeken, Elidinis, Ralos and Ranul.
-  Each theme has its own fill, trail and frame colors, and the fill color
-  changes as the opponent's health drops.
-- **Custom colors** — choose the Custom theme to pick every color with a color
-  picker: the fill at full and low health, damage trail, frame, ornament metal
-  and gems, and each piece of text.
-- **Optional extras** (off by default) — the combat level next to the name,
-  hitpoints text below the bar (percentage, value when the max hitpoints are
-  known, or both), and a border flash on big hits.
-- **Fit to game view** — in fixed mode or a small window, the bar gets narrower
-  so it doesn't take up too much of the game view.
-- The bar can be moved like any other RuneLite overlay.
+## The idea
 
-## How it works
+Two things bugged me about the default bar. It's small, and it doesn't really
+react to anything — a hit for 70 looks the same as a hit for 3.
 
-The bar follows the NPC you are interacting with, the same way RuneLite's
-"Opponent Information" plugin does. Attacking a lower-level NPC, such as one a
-boss spawns, doesn't move the bar away from a living boss. Health is read from
-the game's health ratio and scale, and converted to hitpoints using RuneLite's
-NPC hitpoints data when the max hitpoints are known.
+So this one tries to make a fight readable at a glance:
 
-With "Only show for bosses" on, superior slayer monsters you spawn also get the
-bar, whatever their combat level. The plugin spots them from the game message
-sent when one appears, and picks the NPC that spawned closest to you.
+- Damage drops the fill straight away, but the health you just took off hangs
+  around as a lighter section for a moment before draining. You get to see how
+  big the hit was after it's landed.
+- Your own recent hits add up into a single number above the right end, which
+  resets a couple of seconds after you stop hitting.
+- The fill shifts color as health drops, and pulses once the opponent is nearly
+  dead.
 
-The plugin only shows information the game already shows. It doesn't predict
-mechanics or add timers.
+That's about it. It doesn't know anything the game hasn't already told you —
+no timers, no attack prediction, no mechanic warnings. Same information, drawn
+bigger.
 
-By default, the plugin turns off the health bar of RuneLite's "Opponent
-Information" plugin while it runs, so two health bars aren't shown at once.
-The setting is restored when this plugin is turned off. This can be disabled
-in the config.
+You can drag it around like any other RuneLite overlay.
 
-## The game's own boss health bars
+## Settings
 
-Some bosses show the game's own health bar at the top of the screen. While
-you fight one of them, the plugin hides that bar and shows this bar instead,
-using the game's exact hitpoints and phase markers. For bosses the game only
-shows as a percentage, the hitpoints text also only shows a percentage.
+Right-click the bar, or find "Modern Boss Healthbar" in the plugin panel.
 
-Theatre of Blood has its own boss health bar. While it's up, this bar follows
-the room's boss, which is taken to be the nearby attackable NPC with the
-highest combat level. It uses the health from the Theatre of Blood bar and
-hides that bar.
+**Preview** draws a fake opponent that loops through losing and regaining
+health, so you can mess with settings without going and finding something to
+fight. Off by default.
 
-Turn off "Replace game's boss health bar" to keep the game's bars. This bar is
-then hidden for those bosses, so two bars aren't shown at once.
+### Appearance
 
-## Configuration
+- **Theme** — one per god: Zamorak (the default), Saradomin, Guthix, Armadyl,
+  Bandos, Zaros, Seren, Tumeken, Elidinis, Ralos and Ranul. Each one sets the
+  fill, trail and frame colors. Picking Custom unlocks the Custom colors section
+  below, prefilled with whatever theme you were on, so you're not starting from
+  scratch.
+- **Ornaments** — the decorations on each end. Godsword, Staff and Skull and
+  bone draw a different piece on each side; Scroll and Brackets draw the same
+  piece mirrored. Set it to None if you'd rather just have the bar.
+- **Ornament size** — 50–200%, relative to whatever size suits your bar height.
+  Default 100.
+- **Bar width** — 200 to 1400 pixels. Default 600.
+- **Fit to game view** — shrinks the bar when it'd eat too much of the screen,
+  like in fixed mode or a small window. The height and text stay put so it
+  doesn't turn into a smudge. On by default.
+- **Bar height** — 4 to 24 pixels, just the bar itself and not the text around
+  it. Default 7.
+- **Show damage trail** — the lighter section described above. Turn it off and
+  the fill just drops.
+- **Show phase markers** — when this bar is standing in for the game's own boss
+  bar, draw the same phase markers that bar would have. On by default.
+- **Flash on big hits** — flashes the border when a hit takes off a big chunk.
+  Off by default; it's a bit much at some bosses.
+- **Intro animation** — how the bar shows up for a new opponent. Fade is just an
+  opacity fade, Slide in rises into place, Expand widens from the middle with
+  the fill sweeping up to the opponent's health, and Slide in and expand does
+  both. That last one is the default.
+- **Defeat animation** — holds the empty bar with a "Defeated" label for a
+  moment when the opponent dies, then fades it. On by default.
+- **Low health effect** — makes the fill pulse and glow when the opponent is
+  low. On by default.
+- **Low health threshold** — where "low" starts, 5–50%. Default 25.
+- **Heal animation speed** — 1 to 10, how fast the bar refills when something
+  heals. Default 6. Damage always drops instantly regardless; only healing is
+  animated.
 
-Right-click the bar, or find "Modern Boss Healthbar" in the RuneLite plugin
-panel, to configure:
+### Custom colors
 
-- **Preview** — show the bar with a sample opponent while you aren't fighting,
-  to try out settings
-- **Appearance** — theme, ornaments and their size, bar width and height, fit to game view, damage trail, phase
-  markers, flash on big hits, intro animation, defeat animation, low health effect and
-  threshold, heal animation speed
-- **Custom colors** — the colors used by the Custom theme
-- **Text** — font, whether to show the name, combat level and damage
-  number, hitpoints text (none / percentage / hitpoints / both)
-- **Behaviour** — only show for bosses and the minimum combat level for that,
-  whether to also show it for superior slayer monsters, how long the bar stays after you stop attacking, whether to replace the
-  game's boss health bars, and whether to hide the "Opponent Information"
-  health bar
+Ignored unless Theme is set to Custom. There's one for the fill at full health
+and another for the fill at zero — set both to the same color if you don't want
+it to shift. The rest are the damage trail, the frame (which also covers the end
+pieces, underline and phase markers), the ornament metal, the ornament gems, the
+name and damage text, the combat level, the hitpoints text and the "Defeated"
+label.
+
+The ornament metal color gets mixed with whatever the piece is supposed to be
+made of, so a bone or a blade tip won't come out as pure metal.
+
+### Text
+
+- **Font** — RuneLite's font picker, so you get the RuneScape fonts, anything
+  installed on your machine, and any `.ttf` or `.otf` you drop in
+  `.runelite/fonts`. Size, bold and italic too. The combat level and hitpoints
+  text use a smaller version of whatever you pick.
+- **Show name** — the opponent's name above the left end. On by default.
+- **Show combat level** — next to the name. Off by default.
+- **Show damage number** — your recent hits totalled above the right end. On by
+  default.
+- **Hitpoints text** — below the bar: off, a percentage, the actual value, or
+  both. Off by default. The value is worked out from the health ratio the game
+  sends plus RuneLite's known max hitpoints, so it's an estimate unless the
+  game's boss bar is up and giving exact numbers. Bosses the game only ever
+  shows as a percentage stay a percentage here too.
+
+### Behaviour
+
+- **Only show for bosses** — on by default, otherwise you get a giant health bar
+  for every cow you hit. An opponent qualifies if it's at or above the minimum
+  combat level, or the game's own boss bar is showing it, or it's a superior
+  slayer monster and that setting is on.
+- **Minimum combat level** — default 150.
+- **Show for superior slayer monsters** — superiors get a bar no matter their
+  combat level. On by default.
+- **Hide after** — how long the bar sticks around once you stop attacking, 1–60
+  seconds, default 5. If the game's own boss bar is still showing the opponent,
+  the bar stays anyway.
+- **Replace game's boss health bar** — see below. On by default.
+- **Hide vanilla opponent overlay** — turns off the health bar in RuneLite's
+  "Opponent Information" plugin while this one is running, so you're not looking
+  at two health bars. On by default, and it puts your setting back when you
+  disable this plugin.
+
+## How it picks what to show
+
+It follows whatever you're interacting with, the same way the Opponent
+Information plugin does. If you attack something weaker mid-fight — one of the
+smaller things a boss throws at you, say — the bar stays on the boss instead of
+hopping to it.
+
+Superiors are a special case because the game doesn't flag them in any way the
+plugin can read directly. It watches for the chat message, then picks the
+attackable NPC that spawned nearest to you around the same tick. It's a guess,
+but a reliable one in practice.
+
+## The game's own boss bars
+
+Some bosses come with a health bar at the top of the screen. When you're
+fighting one of those, this plugin hides it and uses its numbers instead — which
+is nice, because that bar knows exact hitpoints and phase markers rather than
+the rounded ratio you normally get.
+
+Theatre of Blood has its own version of that bar. It doesn't say which NPC it
+belongs to, so the plugin works it out by taking the nearby attackable NPC with
+the highest combat level (and the biggest one, if there's a tie).
+
+If you'd rather keep the game's bars, turn off "Replace game's boss health bar".
+This bar then gets out of the way for those bosses so you're not looking at two
+at once.
+
+## Building
+
+Standard RuneLite external plugin setup — `./gradlew run` launches a
+development client with the plugin loaded. Java 11.
