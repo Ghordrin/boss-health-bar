@@ -1,9 +1,7 @@
 package com.ghordrin.bosshealthbar;
 
-import com.google.common.collect.ImmutableMap;
 import com.google.inject.Provides;
 import java.awt.Color;
-import java.awt.Font;
 import java.time.Duration;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -37,7 +35,6 @@ import net.runelite.api.gameval.VarbitID;
 import net.runelite.api.widgets.Widget;
 import net.runelite.client.callback.ClientThread;
 import net.runelite.client.config.ConfigManager;
-import net.runelite.client.config.FontType;
 import net.runelite.client.eventbus.Subscribe;
 import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
@@ -75,22 +72,6 @@ public class BossHealthBarPlugin extends Plugin
 	// restored after the client closes while the plugin is on.
 	private static final String SAVED_VANILLA_OVERLAY_KEY = "savedOpponentHealthOverlay";
 	private static final String VANILLA_OVERLAY_HIDDEN_KEY = "opponentHealthOverlayHidden";
-	// Themes that have been removed, and the closest current theme each saved choice moves to.
-	private static final Map<String, HealthBarTheme> REMOVED_THEMES = ImmutableMap.<String, HealthBarTheme>builder()
-		.put("ASHEN_CRIMSON", HealthBarTheme.ZAMORAK)
-		.put("EMBERFALL", HealthBarTheme.RALOS)
-		.put("GILDED_BLOOD", HealthBarTheme.ZAMORAK)
-		.put("FROSTBOUND", HealthBarTheme.SARADOMIN)
-		.put("ABYSSAL", HealthBarTheme.ZAROS)
-		.put("OBSIDIAN", HealthBarTheme.ARMADYL)
-		.put("VERDANT", HealthBarTheme.GUTHIX)
-		.put("VENOM", HealthBarTheme.BANDOS)
-		.put("SUNFORGED", HealthBarTheme.TUMEKEN)
-		.put("DUSKROSE", HealthBarTheme.ZAROS)
-		.build();
-	// The removed font choice and text size percentage, replaced by the font setting.
-	private static final String OLD_FONT_STYLE_KEY = "fontStyle";
-	private static final String OLD_TEXT_SIZE_KEY = "textSize";
 
 	@Inject
 	private Client client;
@@ -151,8 +132,6 @@ public class BossHealthBarPlugin extends Plugin
 	@Override
 	protected void startUp()
 	{
-		migrateRemovedTheme();
-		migrateOldFontSettings();
 		// The overlay keeps its state while the plugin is off, and misses any config changes made then.
 		overlay.reset();
 		overlayManager.add(overlay);
@@ -171,68 +150,6 @@ public class BossHealthBarPlugin extends Plugin
 			restoreTobBar();
 			resetState();
 		});
-	}
-
-	/**
-	 * Moves a saved theme that no longer exists to the closest current theme, so the setting isn't
-	 * silently reset to the default.
-	 */
-	private void migrateRemovedTheme()
-	{
-		final String saved = configManager.getConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.THEME_KEY);
-		final HealthBarTheme replacement = saved != null ? REMOVED_THEMES.get(saved) : null;
-		if (replacement != null)
-		{
-			configManager.setConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.THEME_KEY, replacement);
-		}
-	}
-
-	/**
-	 * Turns the removed font choice and text size settings into the font setting, with the family,
-	 * size and weight the old choice was drawn with, then removes them.
-	 */
-	private void migrateOldFontSettings()
-	{
-		final String style = configManager.getConfiguration(BossHealthBarConfig.GROUP, OLD_FONT_STYLE_KEY);
-		final String textSize = configManager.getConfiguration(BossHealthBarConfig.GROUP, OLD_TEXT_SIZE_KEY);
-		if (style == null && textSize == null)
-		{
-			return;
-		}
-
-		if (configManager.getConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.FONT_KEY) == null)
-		{
-			float scale = 1f;
-			if (textSize != null)
-			{
-				try
-				{
-					scale = Integer.parseInt(textSize) / 100f;
-				}
-				catch (NumberFormatException e)
-				{
-					log.debug("Ignoring invalid saved text size {}", textSize);
-				}
-			}
-
-			final FontType font;
-			if ("RUNESCAPE".equals(style))
-			{
-				font = FontType.BOLD.withSize(Math.round(16 * scale));
-			}
-			else if ("SANS_SERIF".equals(style))
-			{
-				font = new FontType().withFamily(Font.SANS_SERIF).withBold(true).withSize(Math.round(15 * scale));
-			}
-			else
-			{
-				font = BossHealthBarConfig.DEFAULT_FONT.withSize(Math.round(17 * scale));
-			}
-			configManager.setConfiguration(BossHealthBarConfig.GROUP, BossHealthBarConfig.FONT_KEY, font);
-		}
-
-		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, OLD_FONT_STYLE_KEY);
-		configManager.unsetConfiguration(BossHealthBarConfig.GROUP, OLD_TEXT_SIZE_KEY);
 	}
 
 	/**
