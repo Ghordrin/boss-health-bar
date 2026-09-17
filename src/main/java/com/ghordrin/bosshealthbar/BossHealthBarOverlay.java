@@ -468,21 +468,18 @@ class BossHealthBarOverlay extends Overlay
 		graphics.translate(-shownInset, 0);
 
 		setOpacity(graphics, originalComposite, opacity * textOpacity);
-		if (defeated)
+		final String footerText = defeated ? DEFEATED_TEXT : hpText;
+		if (footerText != null)
 		{
 			graphics.setFont(smallFont);
-			FontMetrics metrics = graphics.getFontMetrics();
-			int textX = (width - metrics.stringWidth(DEFEATED_TEXT)) / 2;
-			int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
-			drawShadowedText(graphics, DEFEATED_TEXT, textX, baseline, colors.getDefeatedText(), 1f);
-		}
-		else if (hpText != null)
-		{
-			graphics.setFont(smallFont);
-			FontMetrics metrics = graphics.getFontMetrics();
-			int textX = width - CAP_WIDTH - TEXT_INSET - metrics.stringWidth(hpText);
-			int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
-			drawShadowedText(graphics, hpText, textX, baseline, colors.getHitpointsText(), 1f);
+			final FontMetrics metrics = graphics.getFontMetrics();
+			// The label is centered under the bar, while the hitpoints sit against its right end.
+			final int textX = defeated
+				? (width - metrics.stringWidth(footerText)) / 2
+				: width - CAP_WIDTH - TEXT_INSET - metrics.stringWidth(footerText);
+			final int baseline = barY + barHeight + CAP_RISE + metrics.getAscent() + 1;
+			final Color footerColor = defeated ? colors.getDefeatedText() : colors.getHitpointsText();
+			drawShadowedText(graphics, footerText, textX, baseline, footerColor, 1f);
 		}
 		setOpacity(graphics, originalComposite, opacity);
 
