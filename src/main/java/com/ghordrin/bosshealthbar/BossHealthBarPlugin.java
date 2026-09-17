@@ -1,27 +1,3 @@
-/*
- * Copyright (c) 2026, Ghordrin
- * All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- * 1. Redistributions of source code must retain the above copyright notice, this
- *    list of conditions and the following disclaimer.
- * 2. Redistributions in binary form must reproduce the above copyright notice,
- *    this list of conditions and the following disclaimer in the documentation
- *    and/or other materials provided with the distribution.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
- * ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
- * WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
- * DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
- * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
- * (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
- * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
- * ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
- * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
- * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
- */
 package com.ghordrin.bosshealthbar;
 
 import com.google.common.collect.ImmutableMap;
@@ -67,6 +43,7 @@ import net.runelite.client.events.ConfigChanged;
 import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.ui.overlay.OverlayManager;
+
 @Slf4j
 @PluginDescriptor(
 	name = "Modern Boss Healthbar",
@@ -275,6 +252,7 @@ public class BossHealthBarPlugin extends Plugin
 				if (theme.name().equals(previousValue))
 				{
 					previous = theme;
+					break;
 				}
 			}
 		}
@@ -332,6 +310,9 @@ public class BossHealthBarPlugin extends Plugin
 		lastHitMillis = 0;
 		lastInteractionLostMillis = 0;
 		resetComboDamage();
+		// The overlay keeps drawing the opponent through the defeat animation, so it has to forget it
+		// too, or the bar can carry over to the next world.
+		overlay.reset();
 	}
 
 	/**
@@ -528,10 +509,10 @@ public class BossHealthBarPlugin extends Plugin
 	}
 
 	/**
-	 * Whether the actor is an NPC with the ID the game's boss bar tracks. Several loaded NPCs can
-	 * share that ID.
+	 * Whether the actor is an NPC with the ID the game's boss bar tracks, which means that bar is
+	 * enabled in the game settings and showing it. Several loaded NPCs can share that ID.
 	 */
-	private boolean isNativeBarNpc(Actor actor)
+	boolean isNativeBarNpc(Actor actor)
 	{
 		if (!(actor instanceof NPC))
 		{
@@ -553,6 +534,8 @@ public class BossHealthBarPlugin extends Plugin
 		if (trackedId == -1)
 		{
 			nativeBarNpc = null;
+			// The same ID may be tracked again later, so don't let the search below be skipped for it.
+			nativeBarSearchedId = -1;
 			return null;
 		}
 
@@ -830,7 +813,7 @@ public class BossHealthBarPlugin extends Plugin
 		boolean replace = false;
 		if (config.replaceNativeBossBar())
 		{
-			if (shouldShowBarFor(lastOpponent) && isNativeBarTracking(lastOpponent))
+			if (shouldShowBarFor(lastOpponent) && isNativeBarNpc(lastOpponent))
 			{
 				replace = true;
 				replacedNativeBarNpcId = nativeBarNpcId();
@@ -944,14 +927,6 @@ public class BossHealthBarPlugin extends Plugin
 				|| opponent.getCombatLevel() >= config.minimumCombatLevel()
 				|| isGameBarBoss(opponent)
 				|| (config.showSuperiors() && superiors.contains(opponent)));
-	}
-
-	/**
-	 * Whether the game's boss bar is enabled in the game settings and tracking this opponent.
-	 */
-	boolean isNativeBarTracking(Actor opponent)
-	{
-		return isNativeBarNpc(opponent);
 	}
 
 	/**
